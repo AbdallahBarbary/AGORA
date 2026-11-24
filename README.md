@@ -39,9 +39,3 @@ The farm map shows internal simulator state. Agents receive noisy sensor values 
 
 This milestone uses explicit rules, not a trained prediction model or an LLM. It does not include temperature control, seeding, rainfall dynamics, negotiation, joint assessment, persistence, or real hardware. Hardware adapters can later implement the sensor and actuator boundaries, with additional feedback and failure handling required before physical use.
 
-## Discussion talking points
-
-- We implemented the full observe/request/allocate/act/update loop.
-- The Manager leads allocation before execution, reflecting the TA feedback.
-- Shortage demonstrations show prioritization, not measured water savings.
-- The next stages cover data calibration and forecasting, richer cooperation, and final hardware testing.
