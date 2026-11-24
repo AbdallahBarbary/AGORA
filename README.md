@@ -13,7 +13,7 @@ python server.py
 
 Open http://127.0.0.1:8765 in your browser. Keep the terminal running. Stop it with Ctrl+C.
 
-Run checks with `python -m unittest -v` from this directory.
+Run checks with `python -m unittest -v` from this directory. Re-derive the FITTED numbers from the downloaded data with `python calibrate.py`.
 
 ## Moisture scale
 
@@ -45,27 +45,61 @@ The dashboard shows the message feed and, in the decision log, each zone's recom
 
 `server.py` exposes the state and step/reset/refill/event actions on a local HTTP server. `web/` provides the custom browser interface. State lives in memory and is shared between browser tabs. Restarting the server resets it. The simulation advances only while the browser runs it or the user requests a step.
 
-## Parameters and limitations
+## Numbers and sources
 
-Each value in the code is labelled with its origin: **FITTED** (from real data), **REFERENCE** (from a published source) or **ASSUMPTION** (a modelling choice). The data is described in `data/README.md`.
+Every tunable number in the project, taken from the code (`engine.py` `Config`, `TANK`, `MOISTURE`; `environment.py` `EnvironmentConfig`; `agents.py` `AgentConfig`; `messaging.py`). **FITTED** = estimated from real data, **REFERENCE** = taken from a published source, **ASSUMPTION** = a modelling choice. The data is described in `data/README.md`. Moisture is % of available water (AW): 0 = wilting point, 100 = field capacity.
 
-| Setting | Value | Origin |
-|---|---|---|
-| Daily temperature | mean 22.6 °C, ±5.6 °C, hottest at 15.7 h | FITTED: NOAA USCRN hourly, Tucson 11 W, 2024–2025 |
-| Base drying rate | 0.09% of available water per 30-minute cycle at the mean temperature | REFERENCE: FAO-56 tomato water use ~5 mm/day ÷ 112 mm available water; consistent with USCRN dry-down |
-| Heat effect on drying | +2% per °C | FITTED: USCRN rain-free day-to-day soil moisture loss (noisy, 1–3.5%) |
-| Showers | 0.0037 chance per cycle, 2–8 cycles long, 0.45–0.71% of available water per cycle | FITTED: USCRN Tucson hourly precipitation |
-| Litres per point | 112 (11,200 L of available water ÷ 100) | REFERENCE: 100 m² cell × 0.7 m tomato roots × 160 mm/m available water (loam) |
-| Irrigation trigger | 60% (40% of available water used up) | REFERENCE: FAO-56 Table 22, tomato p = 0.40 |
-| Target / critical | 100% (field capacity) / 30% | ASSUMPTION |
-| Sensor noise | ±9.375 points, uniform | ASSUMPTION: METER TEROS 10 accuracy with soil-specific calibration, ±0.015 m³/m³ (midpoint of METER's ±0.01–0.02), ÷ 0.16 m³/m³ available water (loam). Worst case: generic calibration ±0.03 m³/m³ = ±18.75 points. Independent tests report errors nearer ±0.03 even after calibration |
-| Starting moisture | Normal 70–100%, One zone 80–100% (North 18–36%), Critical shortage and Empty 15–45% | ASSUMPTION |
-| Tanks | Normal 100,000 L, One zone 50,000 L, Critical shortage 10,000 L, Empty 0 | ASSUMPTION |
-| Refill button / hand-watering | 5,000 L / 1,000 L | ASSUMPTION |
-| Cell drying spread, rain evaporation ×0.3, minimum drying ×0.2, smoothing, heatwave and drought sizes | | ASSUMPTION |
-| "Plentiful" tank level for the Manager's water price | 100,000 L (a full Normal tank); price ×1 to ×3 | ASSUMPTION |
-| Utility weights | benefit 0.5, urgency 0.3, cost 0.2 | ASSUMPTION: the project deck |
-| Forecasting | 1 hour ahead, 2-day window, trend from 48 readings (1 day), act from 4 (sooner if critical), part of the gap = half | ASSUMPTION |
+**Reproducing the FITTED values:** `python calibrate.py` reads `data/uscrn/`, re-derives every FITTED number, prints it next to the value in the code and marks any difference. All of them currently match. A test runs the same check whenever the data files are present.
+
+| Number | Value in the code | Type | Source / note | Where |
+|---|---|---|---|---|
+| Cell size | 100 m² | ASSUMPTION | 10 m × 10 m cells | `Config.cell_area_m2` |
+| Root depth | 0.7 m | REFERENCE | FAO-56 Table 22, tomato (0.7–1.5 m; the shallow end) | `Config.root_depth_m` |
+| Available water per metre of soil | 160 mm/m (0.16 m³/m³) | REFERENCE | UMN Extension, loam. A stand-in for FAO-56 Table 19 that still needs verifying (see Known limitations) | `Config.available_water_mm_per_m` |
+| Total available water per cell | 11,200 L (112 mm) | REFERENCE (derived) | 100 m² × 0.7 m × 160 mm/m | follows from the three above |
+| Litres per point | 112 L | REFERENCE (derived) | 11,200 L ÷ 100 points, so 1 point = 1% of AW; a test checks it against the three inputs | `Config.litres_per_point` |
+| Irrigation trigger | 60% | REFERENCE | FAO-56 Table 22, tomato depletion fraction p = 0.40 (40% of AW used up) | `Config.trigger` |
+| Target | 100% (field capacity) | ASSUMPTION | Irrigation refills a cell to field capacity | `Config.target` |
+| Critical level | 30% | ASSUMPTION | Well past the stress line; served first in shortages | `Config.critical` |
+| Daily water use | ~5 mm/day → 0.09% of AW per 30-min cycle at the mean temperature | REFERENCE ⚠ | "FAO-56 tomato water use" ÷ 112 mm AW; consistent with the USCRN dry-down. Cites FAO-56 generally, not a table or an ET₀ × Kc calculation | `EnvironmentConfig.base_drying_rate` |
+| Heat effect | +2% drying per °C above the mean (−2% below), floor ×0.2 | FITTED (floor: ASSUMPTION) | USCRN Tucson day-to-day soil moisture loss on rain-free days. Noisy: `calibrate.py` estimates 1.6% (90% range 0.4–2.8%), and other choices of days give 1.6–3.2%. 2% sits inside that range, so it was kept | `drying_per_degree`, `min_drying_factor` |
+| Temperature cycle | mean 22.6 °C, ±5.6 °C, hottest at 15.2 h (17.0–28.2 °C) | FITTED | NOAA USCRN hourly, Tucson 11 W, 2024–2025. The sine is the daily cycle's main harmonic; the real hour-by-hour average runs 16.7–28.6 °C | `mean_temp`, `temp_amplitude`, `peak_hour` |
+| Shower chance | 0.0037 per dry 30-min cycle (~65 showers a year) | FITTED | NOAA USCRN hourly precipitation, Tucson 11 W, 2024–2025 | `rain_chance` |
+| Shower length | 2–6 cycles (1–3 h), uniform; mean 2 h | FITTED (a range chosen to keep the mean) | Data: mean 2.05 h, typical 1–4 h (10th–90th percentile), full range 1–9 h. The range keeps the data's mean length rather than covering every shower | `rain_ticks` |
+| Rain per cycle | 0.40–1.12% of AW per rainy cycle, uniform; mean 0.76 | FITTED (a range chosen to keep the mean) | Data: per-hour intensity median 0.40, mean 0.76, middle half 0.18–0.94, heaviest hours more. The range runs from the median and keeps the mean, so annual rain matches (model 197% of AW a year, data 202%) | `rain_points` |
+| Evaporation while raining | ×0.3 | ASSUMPTION | Cloudy, humid air | `rain_drying_factor` |
+| Cell drying spread | each cell × 0.8–1.2 (1 ± 0.2), smoothed in patches, farm average exactly 1 | ASSUMPTION | | `drying_spread`, `smoothing_passes` = 3 |
+| Sensor noise | ±9.375 points, uniform | ASSUMPTION | METER TEROS 10 tech specs: ±0.015 m³/m³, the midpoint of the ±0.01–0.02 soil-specific-calibration accuracy, ÷ 0.16 m³/m³. Worst case: generic calibration ±0.03 m³/m³ = ±18.75 points | `Config.sensor_noise` |
+| Tank sizes | Normal 100,000 L, One zone 50,000 L, Critical shortage 10,000 L, Empty 0 | ASSUMPTION | Sized for 100 m² cells | `TANK` |
+| Starting moisture | Normal 70–100%, One zone 80–100% (North 18–36%), Critical shortage and Empty 15–45% | ASSUMPTION | | `MOISTURE`, `NORTH_DRY` |
+| Refill / hand-watering | 5,000 L / 1,000 L | ASSUMPTION | Dashboard events | `refill_litres`, `manual_water_litres` |
+| Heatwave / drought | +10 °C for 2 days / no rain and drying ×1.5 for 3 days | ASSUMPTION | Dashboard events | `heatwave_*`, `drought_*` |
+| Decision cycle | 30 minutes | ASSUMPTION | | `Config.tick_minutes` |
+| "Stressed" zone | more than a quarter of its cells (> 4 of 16) estimated below the trigger | ASSUMPTION (project design) | | `AgentConfig.stressed_share` |
+| "Farm-wide" problem | 3 or more stressed zones (1–2 = local) | ASSUMPTION (project design) | | `AgentConfig.farm_wide_zones` |
+| Urgency below critical | points below 30% count double | ASSUMPTION (project design) | | `AgentConfig.critical_stress_weight` |
+| Utility weights | benefit 0.5, urgency 0.3, cost 0.2 | ASSUMPTION | The project deck | `AgentConfig` |
+| Water price | ×1 at 100,000 L or more, rising to ×3 when empty | ASSUMPTION | A full Normal tank counts as plentiful | `comfortable_tank`, `scarcity_price` |
+| Forecasting | 1 h ahead; 96-reading (2-day) window; trend from 48 readings; act from 4 readings unless critical; part of the gap = ½ | ASSUMPTION | | `AgentConfig` |
+| Feed folding | an unchanged repeat within 6 cycles (3 h) folds into one entry | ASSUMPTION | | `MessageBus.fold_cycles` |
+
+### Numbers still without a label or a precise source
+
+- **Daily water use** (~5 mm/day) cites FAO-56 in general, not a table or an ET₀ × crop-coefficient calculation.
+- **Temperature shape:** the daily cycle is a pure sine wave, an unlabelled modelling choice. The real Tucson cycle is lopsided (slow evening cooling), which the sine flattens by 0.3 °C at the cool end and 0.4 °C at the hot end.
+- **Display only:** the Manager calls water "scarce" above 50% scarcity in its broadcast text. It doesn't affect any decision.
+- **Farm layout and run settings:** 8 × 8 grid in four 4 × 4 zones, seed 42 (`engine.py`). These are structural rather than calibration numbers.
+- **Display and memory limits (not model parameters):** 60 history points per cell, 500 decisions in the log, 20 events, 150 feed entries sent to the browser, 300 kept on the bus, a 1,000,000 L refill limit, a 4 KB request limit and port 8765.
+
+### Known limitations
+
+- **Available water is a stand-in.** 160 mm/m for loam comes from UMN Extension and is used in place of a value from FAO-56 Table 19, which still needs verifying for this soil. Total available water per cell, litres per point, and every litre amount in the project scale with it.
+- **The heat effect comes from day-to-day data, not hourly.** USCRN's hourly soil moisture at Tucson was too noisy to show a usable hourly dry-down, so the heat effect comes from day-to-day losses on rain-free days. It's noisy (0.4–2.8%, depending on which days are used up to 3.2%), and it can't show how drying changes within a day.
+- **The sensor noise is optimistic.** ±9.375 points assumes a soil-specific calibration that reaches the middle of METER's ±0.01–0.02 m³/m³ claim. METER's generic figure (±0.03 m³/m³ = ±18.75 points) is the worst case, and independent tests found errors near ±0.03 m³/m³ even after calibration. Noise is also modelled as uniform and independent per reading, with no fixed per-sensor bias.
+- **Rain uses even ranges, not the real distribution.** Showers and their intensity are drawn evenly from ranges that keep the data's averages and annual total. Real Tucson rain is lumpier: most showers last an hour, and a few heavy storms bring much of the year's rain.
+- **The USCRN station only measures soil moisture at 5 and 10 cm**, shallower than the 0.7 m root zone, and 2024 has nightly gaps from 1 January to 20 February.
+
+### Model notes
 
 Each cell dries at the base rate times its own drying scale. The scales sit around 1 (about 0.8–1.2), come in slow- and fast-drying patches made with the same smoothing as the starting moisture, and average exactly 1 across the farm, so the base rate is the farm-average rate. The agents' water cost is a share of the cell's available water, not litres, so their decisions don't change when the litres-per-point conversion does. None of this is an agronomic recommendation.
 

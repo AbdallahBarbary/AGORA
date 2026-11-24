@@ -23,8 +23,13 @@ class Config:
     trigger: float = 60             # REFERENCE: FAO-56 Table 22, tomato depletion fraction p = 0.40
                                     # (water can stress the crop once 40% of AW is used up)
     critical: float = 30            # ASSUMPTION: well past the stress line; served first in shortages
-    litres_per_point: float = 112   # REFERENCE: 100 m2 cell x 0.7 m tomato roots x 160 mm/m AW for loam
-                                    # = 11,200 L of available water = 100 points, so 1 point = 1% of AW
+    # Water held by one cell (1 mm of water over 1 m2 = 1 L):
+    cell_area_m2: float = 100       # ASSUMPTION: each of the 64 cells is 10 m x 10 m
+    root_depth_m: float = .7        # REFERENCE: FAO-56 Table 22, tomato root depth (0.7-1.5 m; shallow end)
+    available_water_mm_per_m: float = 160   # REFERENCE: UMN Extension, available water of loam. A stand-in
+                                            # for FAO-56 Table 19 that still needs verifying
+    litres_per_point: float = 112   # REFERENCE (derived): 100 m2 x 0.7 m x 160 mm/m = 11,200 L of
+                                    # available water = 100 points, so 1 point = 1% of AW (checked by a test)
     sensor_noise: float = 9.375     # ASSUMPTION: METER TEROS 10 accuracy with soil-specific calibration,
                                     # +-0.015 m3/m3 (midpoint of METER's +-0.01-0.02 range; source: METER
                                     # TEROS 10 tech specs, metergroup.com/products/teros-10/teros-10-tech-specs/)

@@ -13,21 +13,27 @@ import random
 
 @dataclass(frozen=True)
 class EnvironmentConfig:
-    # --- Temperature: FITTED, NOAA USCRN hourly data, Tucson 11 W, 2024-2025 ---
+    # --- Temperature: FITTED, NOAA USCRN hourly data, Tucson 11 W, 2024-2025 (reproduce: python calibrate.py) ---
     mean_temp: float = 22.6          # °C, daily average
-    temp_amplitude: float = 5.6      # °C, half the day/night swing (17.0–28.2 °C)
-    peak_hour: float = 15.7          # hottest time of day, local standard time
+    temp_amplitude: float = 5.6      # °C, half the day/night swing of the fitted sine (17.0–28.2 °C);
+                                     # the real hour-by-hour average runs 16.7–28.6 °C
+    peak_hour: float = 15.2          # hottest time of day, local standard time (USCRN hours are stamped
+                                     # at their end, so each hourly average is centred half an hour earlier)
     # --- Drying ---
     base_drying_rate: float = .09    # REFERENCE: % of AW lost per cycle at mean_temp, farm average. FAO-56 tomato
                                      # water use ~5 mm/day / 112 mm total available water; consistent with USCRN dry-down
     drying_spread: float = .2        # ASSUMPTION: cell scales span about 1 ± this (0.8–1.2)
     drying_per_degree: float = .02   # FITTED: +2% drying per °C above mean_temp, -2% below. USCRN Tucson
-                                     # day-to-day soil moisture loss on rain-free days (noisy, range 1–3.5%)
+                                     # day-to-day soil moisture loss on rain-free days. Noisy: calibrate.py's
+                                     # main estimate is 1.6% (90% range 0.4–2.8%), other day filters give 1.6–3.2%
     min_drying_factor: float = .2    # ASSUMPTION: cells never stop drying completely
-    # --- Rain: FITTED, NOAA USCRN hourly precipitation, Tucson 11 W, 2024-2025 ---
+    # --- Rain: FITTED, NOAA USCRN hourly precipitation, Tucson 11 W, 2024-2025 (reproduce: python calibrate.py) ---
+    # Uniform ranges chosen to keep the data's averages, so annual rain matches (~200% of AW a year).
     rain_chance: float = .0037       # chance a shower starts in a dry 30-minute cycle (~1 every 5.6 days)
-    rain_ticks: tuple = (2, 8)       # shower length in cycles (1–4 hours)
-    rain_points: tuple = (.45, .71)  # % of AW added to every cell per rainy cycle
+    rain_ticks: tuple = (2, 6)       # shower length in cycles (1–3 h, mean 2 h as in the data);
+                                     # data: typical 1–4 h (10th–90th percentile), full range 1–9 h
+    rain_points: tuple = (.40, 1.12) # % of AW added to every cell per rainy cycle: from the median
+                                     # intensity, mean 0.76; data: middle half 0.18–0.94, heaviest hours more
     rain_drying_factor: float = .3   # ASSUMPTION: evaporation multiplier while it rains (cloudy, humid air)
     # --- Starting moisture ---
     smoothing_passes: int = 3        # ASSUMPTION: more passes = larger patches of similar moisture

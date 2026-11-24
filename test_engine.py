@@ -1,4 +1,5 @@
 import unittest
+import calibrate
 from dataclasses import replace
 from environment import EnvironmentConfig, Weather, drying_scales
 import random
@@ -288,6 +289,25 @@ class EngineTests(unittest.TestCase):
         self.assertAlmostEqual(cfg.sensor_noise,.015/.16*100)             # calibrated TEROS 10 accuracy over loam's AW
         f=Farm(); f.step()
         self.assertTrue(any(f.readings[c['id']]>100 for c in f.cells))    # readings aren't clipped
+    def test_litres_per_point_follows_the_cell(self):
+        cfg=Config()   # 1 mm of water over 1 m2 is 1 L; 100 points = all of a cell's available water
+        self.assertAlmostEqual(cfg.litres_per_point,cfg.cell_area_m2*cfg.root_depth_m*cfg.available_water_mm_per_m/100)
+    @unittest.skipUnless(calibrate.FILES,'USCRN data not downloaded (see data/README.md)')
+    def test_fitted_values_match_the_data(self):
+        table,_=calibrate.compare()
+        self.assertEqual([name for name,_,_,ok in table if not ok],[])   # every FITTED number reproduces
+    def test_design_rules_are_settings(self):
+        lenient=replace(AgentConfig(),stressed_share=.5,farm_wide_zones=4)
+        north=[c for c in Farm().cells if c['zone']=='North']; levels={c['id']:(30 if i<6 else 80) for i,c in enumerate(north)}
+        self.assertTrue(ZoneAgent('North').zone_status(north,levels,Config())['stressed'])          # 6 > 4 of 16
+        self.assertFalse(ZoneAgent('North',lenient).zone_status(north,levels,Config())['stressed']) # 6 < 8 of 16
+        rep=lambda n:[dict(zone=z,stressed=i<n) for i,z in enumerate(('North','East','West','South'))]
+        self.assertEqual(ManagerAgent(lenient).assess(rep(3))['level'],'local')
+        self.assertEqual(ManagerAgent(lenient).assess(rep(4))['message'],'Farm-wide: all 4 zones stressed.')
+        cfg=Config(); z=ZoneAgent('North'); per_point=lambda a,b:(z.stress(a,cfg)-z.stress(b,cfg))/(b-a)
+        self.assertAlmostEqual(per_point(10,20)/per_point(40,50),2)    # a point below critical counts double
+        flat=ZoneAgent('North',replace(AgentConfig(),critical_stress_weight=1))
+        self.assertAlmostEqual((flat.stress(10,cfg)-flat.stress(20,cfg))/(flat.stress(40,cfg)-flat.stress(50,cfg)),1)
     def test_normal_scenario_is_healthy(self):
         f=Farm('normal'); f.step()
         self.assertEqual(f.last,[])

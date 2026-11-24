@@ -29,6 +29,11 @@ class AgentConfig:
     part_fraction: float = .5       # ASSUMPTION: share of the gap in the "part of the gap" option
     # --- Manager's scarcity signal ---
     comfortable_tank: float = 100_000  # ASSUMPTION: litres; a full Normal tank counts as plentiful
+    # --- Problem scope and urgency: ASSUMPTION (project design) ---
+    stressed_share: float = .25     # a zone is stressed when MORE than this share of its cells (> 4 of 16)
+                                    # is estimated below the trigger
+    farm_wide_zones: int = 3        # this many stressed zones or more = farm-wide problem; 1-2 = local
+    critical_stress_weight: float = 2   # in urgency, points below the critical level count double
 
 
 class ZoneAgent:
@@ -104,11 +109,12 @@ class ZoneAgent:
         cost = points / 100 * self.price               # share of available water used, priced by scarcity
         return self.ac.benefit_weight * benefit + self.ac.urgency_weight * urgency - self.ac.cost_weight * cost
 
-    @staticmethod
-    def stress(moisture, config):
-        """0 at or above the trigger, rising to 1 at the wilting point; points below critical count double."""
-        below = max(0.0, config.trigger - moisture) + max(0.0, config.critical - moisture)
-        return min(1.0, below / (config.trigger + config.critical))
+    def stress(self, moisture, config):
+        """0 at or above the trigger, rising to 1 at the wilting point; points below critical count
+        `critical_stress_weight` times (double by default)."""
+        extra = self.ac.critical_stress_weight - 1
+        below = max(0.0, config.trigger - moisture) + extra * max(0.0, config.critical - moisture)
+        return min(1.0, below / (config.trigger + extra * config.critical))
 
     def rationale(self, a):
         """One readable sentence explaining the chosen option."""
@@ -126,7 +132,7 @@ class ZoneAgent:
     def zone_status(self, cells, levels, config, recommendations=0):
         """Stressed flag: more than a quarter of the zone's cells are estimated below the trigger."""
         dry = sum(levels[c['id']] < config.trigger for c in cells)
-        return dict(zone=self.name, cells=len(cells), dry=dry, stressed=dry > len(cells) / 4,
+        return dict(zone=self.name, cells=len(cells), dry=dry, stressed=dry > len(cells) * self.ac.stressed_share,
                     recommendations=recommendations)
 
 
@@ -173,11 +179,12 @@ class ManagerAgent:
         return dict(rec, allocated=allocated, status=status, reason=reason)
 
     def assess(self, reports):
-        """3-4 stressed zones: farm-wide; 1-2: local; 0: normal."""
+        """farm_wide_zones or more stressed zones (3-4 by default): farm-wide; fewer: local; none: normal."""
         stressed=[r['zone'] for r in reports if r['stressed']]
-        if len(stressed) >= 3:
+        if len(stressed) >= self.ac.farm_wide_zones:
             level='farm-wide'
-            message='Farm-wide: all 4 zones stressed.' if len(stressed)==4 else f'Farm-wide: 3 of 4 zones stressed ({", ".join(stressed)}).'
+            message=(f'Farm-wide: all {len(reports)} zones stressed.' if len(stressed)==len(reports)
+                     else f'Farm-wide: {len(stressed)} of {len(reports)} zones stressed ({", ".join(stressed)}).')
         elif stressed:
             level='local'; message=f'Local problem: {", ".join(stressed)}.'
         else:
