@@ -15,6 +15,8 @@ class EnvironmentConfig:
     temp_amplitude: float = 8        # °C, half the day/night swing (12–28 °C)
     peak_hour: float = 14            # hottest hour of the day
     # --- Drying (PROVISIONAL placeholders) ---
+    base_drying_rate: float = 1.0    # points per cycle at mean_temp, farm average; to be fitted from real data
+    drying_spread: float = .2        # cell scales span about 1 ± this (0.8–1.2); an assumption, not fitted
     drying_per_degree: float = .05   # +5% drying per °C above mean_temp, -5% below
     min_drying_factor: float = .2    # cells never stop drying completely
     # --- Rain (PROVISIONAL placeholders) ---
@@ -44,6 +46,18 @@ def smooth_field(rng, rows, cols, passes):
     flat = [v for row in grid for v in row]
     low, high = min(flat), max(flat)
     return [[(v - low) / (high - low) if high > low else .5 for v in row] for row in grid]
+
+
+def drying_scales(rng, rows, cols, env):
+    """Per-cell multipliers on the farm's base drying rate, in slow- and fast-drying patches.
+
+    Uses the same smoothing as the starting moisture, maps it to 1 ± drying_spread, then
+    shifts it so the farm average is exactly 1. That keeps base_drying_rate meaning
+    "the farm's average rate", which is what a fit to real data will estimate."""
+    field = smooth_field(rng, rows, cols, env.smoothing_passes)
+    scales = [[1 + env.drying_spread * (2 * v - 1) for v in row] for row in field]
+    mean = sum(map(sum, scales)) / (rows * cols)
+    return [[s - mean + 1 for s in row] for row in scales]
 
 
 def _neighbourhood_mean(grid, r, c):

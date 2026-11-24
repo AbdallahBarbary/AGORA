@@ -1,7 +1,7 @@
 """Deterministic demonstration model; parameters are not agronomic calibration."""
 from dataclasses import dataclass, asdict
 import random
-from environment import EnvironmentConfig, Weather, smooth_field
+from environment import EnvironmentConfig, Weather, smooth_field, drying_scales
 from agents import AgentConfig, ZoneAgent, ManagerAgent, MANAGER
 from messaging import MessageBus
 
@@ -46,12 +46,13 @@ class Farm:
         for name in (MANAGER,*ZONES): self.bus.register(name)
         self.cells=[]; counts={z:0 for z in ZONES}
         field=smooth_field(self.rng,8,8,self.env.smoothing_passes)  # neighbours start with similar moisture
+        scales=drying_scales(self.rng,8,8,self.env)                # ...and dry at similar speeds
         for row in range(8):
             for col in range(8):
                 zone=ZONES[(row//4)*2+col//4]; counts[zone]+=1
                 low,high=(15,28) if scenario=='one-zone' and zone=='North' else MOISTURE[scenario]
                 moisture=low+field[row][col]*(high-low)
-                self.cells.append(dict(id=f'{zone[0]}-{counts[zone]:02}',zone=zone,row=row,col=col,moisture=moisture,drying=self.rng.uniform(.6,1.4),history=[moisture]))
+                self.cells.append(dict(id=f'{zone[0]}-{counts[zone]:02}',zone=zone,row=row,col=col,moisture=moisture,drying_scale=scales[row][col],history=[moisture]))
         self.readings=self.sensor.read(self.cells,self.rng,self.config)
 
     def step(self):
@@ -67,10 +68,15 @@ class Farm:
         self.tank=max(0,self.tank-used); self.used+=used; self.tick=cycle
         self.last=[dict(d,tick=cycle) for d in review['decisions']]
         for c in self.cells:  # weather acts after irrigation: rain adds, evaporation removes
-            c['moisture']=max(0,min(100,c['moisture']+conditions['rain']-c['drying']*conditions['drying_factor']))
+            c['moisture']=max(0,min(100,c['moisture']+conditions['rain']-self.drying_rate(c)*conditions['drying_factor']))
             c['history'].append(c['moisture']); c['history']=c['history'][-60:]
         self.logs=(self.last+self.logs)[:500]; self.conditions=conditions
         return self.state()
+
+    def drying_rate(self, cell):
+        """Points a cell loses per cycle at mean temperature: farm base rate × the cell's scale.
+        The weather's drying factor then adjusts this for heat, rain and drought."""
+        return self.env.base_drying_rate*cell['drying_scale']
 
     def refill(self, amount=250):
         if not 0 < amount <= 10000: raise ValueError('Refill must be between 0 and 10,000 L')

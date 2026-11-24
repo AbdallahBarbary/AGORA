@@ -1,6 +1,7 @@
 import unittest
 from dataclasses import replace
-from environment import EnvironmentConfig
+from environment import EnvironmentConfig, drying_scales
+import random
 from engine import Farm, MOISTURE, SCENARIOS, Config
 from agents import ManagerAgent, ZoneAgent, MANAGER
 from forecast import TrendForecaster
@@ -41,7 +42,7 @@ class EngineTests(unittest.TestCase):
                 for c in f.cells:
                     allocation=next((r['allocated'] for r in f.last if r['cell']==c['id']),0)
                     w=f.conditions
-                    expected=max(0,min(100,min(100,old[c['id']]+allocation/f.config.litres_per_point)+w['rain']-c['drying']*w['drying_factor']))
+                    expected=max(0,min(100,min(100,old[c['id']]+allocation/f.config.litres_per_point)+w['rain']-f.drying_rate(c)*w['drying_factor']))
                     self.assertAlmostEqual(c['moisture'],expected)
                     self.assertTrue(0<=c['moisture']<=100)
     def test_assessment_local_one_zone(self):
@@ -211,6 +212,25 @@ class EngineTests(unittest.TestCase):
             self.assertTrue(all(low-1e-9<=v<=high+1e-9 for v in m.values()))
             diffs=[abs(m[r,c]-m[r+dr,c+dc]) for r,c in m for dr,dc in ((0,1),(1,0)) if (r+dr,c+dc) in m]
             self.assertLess(sum(diffs)/len(diffs),.15*(high-low))  # independent values would average about a third
+    def test_drying_scales_are_patchy_around_one(self):
+        env=EnvironmentConfig(); f=Farm(); s={(c['row'],c['col']):c['drying_scale'] for c in f.cells}
+        self.assertAlmostEqual(sum(s.values())/64,1)                                   # base rate = farm average
+        self.assertAlmostEqual(max(s.values())-min(s.values()),2*env.drying_spread)    # modest spread...
+        self.assertTrue(all(abs(v-1)<2*env.drying_spread for v in s.values()))         # ...centred near 1
+        diffs=[abs(s[r,c]-s[r+dr,c+dc]) for r,c in s for dr,dc in ((0,1),(1,0)) if (r+dr,c+dc) in s]
+        self.assertLess(sum(diffs)/len(diffs),.15*2*env.drying_spread)                 # neighbours are similar
+        self.assertEqual(drying_scales(random.Random(7),8,8,env),drying_scales(random.Random(7),8,8,env))  # seeded
+        self.assertNotEqual([c['drying_scale'] for c in Farm(seed=1).cells],list(s.values()))
+        flat=Farm(env=replace(env,drying_spread=0))
+        self.assertTrue(all(abs(c['drying_scale']-1)<1e-12 for c in flat.cells))
+    def test_base_drying_rate_scales_every_cell(self):
+        def losses(base):
+            f=Farm(env=replace(EnvironmentConfig(),base_drying_rate=base,rain_chance=0)); old=[c['moisture'] for c in f.cells]
+            f.step(); self.assertEqual(f.last,[])   # healthy farm: no irrigation in cycle 1
+            return [o-c['moisture'] for o,c in zip(old,f.cells)]
+        one,two=losses(1.0),losses(2.0)
+        for a,b in zip(one,two): self.assertAlmostEqual(b,2*a)
+        f=Farm(); c=f.cells[0]; self.assertAlmostEqual(f.drying_rate(c),f.env.base_drying_rate*c['drying_scale'])
     def test_normal_scenario_is_healthy(self):
         f=Farm('normal'); f.step()
         self.assertEqual(f.last,[])
