@@ -2,6 +2,8 @@
 from dataclasses import dataclass, asdict
 import random
 from environment import EnvironmentConfig, Weather, smooth_field
+from agents import AgentConfig, ZoneAgent, ManagerAgent, MANAGER
+from messaging import MessageBus
 
 ZONES = ('North', 'East', 'West', 'South')
 EVENTS = ('heatwave', 'drought', 'water')
@@ -23,43 +25,6 @@ class SimulatedSensor:
     def read(self, cells, rng, config):
         return {c['id']: max(0, min(100, c['moisture'] + rng.uniform(-config.sensor_noise, config.sensor_noise))) for c in cells}
 
-class ZoneAgent:
-    def __init__(self, name): self.name = name
-    def request(self, cells, readings, config):
-        return [dict(cell=c['id'], zone=self.name, reading=readings[c['id']],
-                     amount=(config.target-readings[c['id']])*config.litres_per_point,
-                     priority='critical' if readings[c['id']] < config.critical else 'normal')
-                for c in cells if c['zone']==self.name and readings[c['id']] < config.trigger]
-    def report(self, cells, readings, config):
-        """Requests plus a stressed flag: more than a quarter of the zone's cells are below the trigger."""
-        requests=self.request(cells, readings, config)
-        size=sum(c['zone']==self.name for c in cells)
-        return dict(zone=self.name, requests=requests, dry=len(requests), stressed=len(requests) > size/4)
-
-class ManagerAgent:
-    def assess(self, reports):
-        """3-4 stressed zones: farm-wide; 1-2: local; 0: normal."""
-        stressed=[r['zone'] for r in reports if r['stressed']]
-        if len(stressed) >= 3:
-            level='farm-wide'
-            message='Farm-wide: all 4 zones stressed.' if len(stressed)==4 else f'Farm-wide: 3 of 4 zones stressed ({", ".join(stressed)}).'
-        elif stressed:
-            level='local'; message=f'Local problem: {", ".join(stressed)}.'
-        else:
-            level='normal'; message='Normal: no zones stressed.'
-        return dict(level=level, stressed=stressed, message=message)
-
-    def allocate(self, requests, tank):
-        allocations = {r['cell']: 0.0 for r in requests}
-        remaining = tank
-        for priority in ('critical', 'normal'):
-            group = [r for r in requests if r['priority']==priority]
-            total = sum(r['amount'] for r in group)
-            ratio = min(1, remaining/total) if total else 0
-            for r in group: allocations[r['cell']] = r['amount']*ratio
-            remaining = max(0, remaining-total*ratio)
-        return allocations
-
 class SimulatedIrrigation:
     def apply(self, cells, allocations, config):
         for cell in cells:
@@ -67,7 +32,7 @@ class SimulatedIrrigation:
         return sum(allocations.values())
 
 class Farm:
-    def __init__(self, scenario='normal', seed=42, config=None, env=None):
+    def __init__(self, scenario='normal', seed=42, config=None, env=None, agent_config=None):
         if scenario not in SCENARIOS: raise ValueError('Unknown scenario')
         self.config=config or Config(); self.rng=random.Random(seed)
         self.env=env or EnvironmentConfig(); self.weather=Weather(self.env,self.config.tick_minutes,seed); self.conditions=None
@@ -75,7 +40,10 @@ class Farm:
         self.tank=TANK[scenario]
         self.initial_water=self.tank; self.added=0; self.manual=0; self.events=[]
         self.sensor=SimulatedSensor(); self.actuator=SimulatedIrrigation()
-        self.agents=[ZoneAgent(z) for z in ZONES]; self.manager=ManagerAgent()
+        self.agent_config=agent_config or AgentConfig()
+        self.agents=[ZoneAgent(z,self.agent_config) for z in ZONES]; self.manager=ManagerAgent(self.agent_config)
+        self.bus=MessageBus(); self.assessments={}
+        for name in (MANAGER,*ZONES): self.bus.register(name)
         self.cells=[]; counts={z:0 for z in ZONES}
         field=smooth_field(self.rng,8,8,self.env.smoothing_passes)  # neighbours start with similar moisture
         for row in range(8):
@@ -89,18 +57,15 @@ class Farm:
     def step(self):
         conditions=self.weather.advance(self.tick)  # weather for the coming 30 minutes
         self.readings=self.sensor.read(self.cells,self.rng,self.config)
-        reports=[agent.report(self.cells,self.readings,self.config) for agent in self.agents]
-        requests=[r for report in reports for r in report['requests']]
-        self.assessment=self.manager.assess(reports)
-        allocations=self.manager.allocate(requests,self.tank)
-        used=self.actuator.apply(self.cells,allocations,self.config)
-        self.tank=max(0,self.tank-used); self.used+=used; self.tick+=1
-        self.last=[]
-        for r in requests:
-            amount=allocations[r['cell']]
-            status='approved' if abs(amount-r['amount'])<1e-8 else ('partial' if amount else 'waiting')
-            reason=('Request fully covered' if status=='approved' else 'Limited water; critical needs first' if status=='partial' else 'No water available for this priority')
-            self.last.append(dict(**r,allocated=amount,status=status,reason=reason,tick=self.tick))
+        cycle=self.tick+1
+        # Agents talk only through the bus: Manager broadcasts the tank, zones recommend, Manager decides and replies.
+        self.manager.announce(self.bus,cycle,self.tank)
+        self.assessments={a['cell']:a for agent in self.agents for a in agent.act(self.bus,cycle,self.cells,self.readings,self.config)}
+        review=self.manager.review(self.bus,cycle,self.tank)
+        self.assessment=review['assessment']   # farm report: problem scope plus shortage reasoning
+        used=self.actuator.apply(self.cells,review['allocations'],self.config)   # only approved water is applied
+        self.tank=max(0,self.tank-used); self.used+=used; self.tick=cycle
+        self.last=[dict(d,tick=cycle) for d in review['decisions']]
         for c in self.cells:  # weather acts after irrigation: rain adds, evaporation removes
             c['moisture']=max(0,min(100,c['moisture']+conditions['rain']-c['drying']*conditions['drying_factor']))
             c['history'].append(c['moisture']); c['history']=c['history'][-60:]
@@ -128,7 +93,9 @@ class Farm:
 
     def state(self):
         return dict(tick=self.tick,scenario=self.scenario,tank=self.tank,used=self.used,added=self.added,manual=self.manual,events=self.events,
-            config=asdict(self.config),cells=[dict(c,reading=self.readings[c['id']]) for c in self.cells],
+            config=asdict(self.config),agent_config=asdict(self.agent_config),
+            cells=[dict(c,reading=self.readings[c['id']],plan=self.assessments.get(c['id'])) for c in self.cells],
+            messages=[{k:m[k] for k in ('id','cycle','sender','recipient','kind','text')} for m in self.bus.feed[:150]],
             environment=asdict(self.env),weather=self.weather.now(self.tick),last_conditions=self.conditions,
             requests=self.last,logs=self.logs,assessment=self.assessment,zones=[dict(name=z,
                 stressed=bool(self.assessment) and z in self.assessment['stressed'],
