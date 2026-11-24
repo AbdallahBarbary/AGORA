@@ -27,10 +27,12 @@ class Handler(BaseHTTPRequestHandler):
             length=int(self.headers.get('Content-Length',0))
             if length>4096: raise ValueError('Request too large')
             data=json.loads(self.rfile.read(length) or b'{}')
+            if not isinstance(data,dict): raise ValueError('Expected a JSON object')
             with lock:
                 if self.path=='/api/step': farm.step()
-                elif self.path=='/api/reset': farm=Farm(data.get('scenario','balanced'))
+                elif self.path=='/api/reset': farm=Farm(data.get('scenario','normal'))
                 elif self.path=='/api/refill': farm.refill(250)
+                elif self.path=='/api/event': farm.trigger(data.get('type'),data.get('cell'))
                 else: return self.respond({'error':'Not found'},404)
                 self.respond(farm.state())
         except (ValueError,TypeError) as e: self.respond({'error':str(e)},400)
