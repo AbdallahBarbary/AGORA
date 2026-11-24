@@ -4,7 +4,7 @@ from dataclasses import replace
 from environment import EnvironmentConfig, Weather, drying_scales
 import random
 from collections import Counter
-from engine import Farm, MOISTURE, SCENARIOS, TANK, Config
+from engine import Farm, MOISTURE, SCENARIOS, TANK, Config, SCENARIO_NAMES, NEAR_LINE_MARGIN, MAX_ADVANCE
 from agents import AgentConfig
 from agents import ManagerAgent, ZoneAgent, MANAGER
 from forecast import TrendForecaster
@@ -308,6 +308,42 @@ class EngineTests(unittest.TestCase):
         self.assertAlmostEqual(per_point(10,20)/per_point(40,50),2)    # a point below critical counts double
         flat=ZoneAgent('North',replace(AgentConfig(),critical_stress_weight=1))
         self.assertAlmostEqual((flat.stress(10,cfg)-flat.stress(20,cfg))/(flat.stress(40,cfg)-flat.stress(50,cfg)),1)
+    # --- Demo speed-ups: near-line start, multi-cycle advance, plain names ---
+    def test_near_line_start(self):
+        cfg=Config(); usual,near=Farm('normal'),Farm('normal',near_line=True)
+        lows=[c['moisture'] for c in near.cells]
+        self.assertAlmostEqual(min(lows),cfg.trigger-NEAR_LINE_MARGIN); self.assertAlmostEqual(max(lows),MOISTURE['normal'][1])
+        rank=lambda f:sorted(range(64),key=lambda i:f.cells[i]['moisture'])
+        self.assertEqual(rank(usual),rank(near))                                # same pattern, just shifted down
+        for scenario in ('shortage','empty'):                                   # already-dry ranges don't change
+            self.assertEqual([c['moisture'] for c in Farm(scenario).cells],[c['moisture'] for c in Farm(scenario,near_line=True).cells])
+        self.assertEqual(Farm('normal',near_line=True).advance(20),Farm('normal',near_line=True).advance(20))   # repeatable
+    def test_agents_act_early_with_near_line_start(self):
+        def first_recommendation(farm):
+            for cycle in range(1,49):
+                farm.step()
+                if farm.last: return cycle
+        self.assertLessEqual(first_recommendation(Farm('normal',near_line=True)),8)   # within 2 s at normal speed
+        self.assertIsNone(first_recommendation(Farm('normal')))                      # the usual start waits longer
+    def test_advance_matches_single_steps(self):
+        a,b=Farm(),Farm()
+        for _ in range(48): a.step()
+        self.assertEqual(a.state(),b.advance(48))
+        for bad in (0,MAX_ADVANCE+1,1.5,True,'3'):
+            with self.assertRaises(ValueError): Farm().advance(bad)
+    def test_scenario_names_and_refill_amount(self):
+        self.assertEqual(set(SCENARIO_NAMES),set(SCENARIOS)); self.assertEqual(Farm().state()['scenarios'],SCENARIO_NAMES)
+        f=Farm('empty'); f.refill(50_000); self.assertEqual((f.tank,f.added),(50_000,50_000))
+        f.refill(); self.assertEqual(f.tank,50_000+f.env.refill_litres)
+    def test_soil_water_balance(self):
+        soil=lambda f:sum(c['moisture'] for c in f.cells)*f.config.litres_per_point
+        f=Farm(env=replace(EnvironmentConfig(),rain_chance=.2)); start=soil(f)   # rain on, no irrigation early on
+        f.advance(3); self.assertEqual(f.used,0); self.assertGreater(f.rain_kept,0)
+        self.assertAlmostEqual(soil(f)-start,f.rain_kept-f.evaporated,delta=1e-6)   # closes exactly without irrigation
+        f=Farm('normal',near_line=True); start=soil(f); f.trigger('heatwave'); f.advance(96)
+        overflow=f.used+f.rain_kept-f.evaporated-(soil(f)-start)                   # irrigation past field capacity drains
+        self.assertGreater(f.used,0); self.assertGreaterEqual(overflow,-1e-6); self.assertLess(overflow,.1*f.used)
+        self.assertGreater(f.evaporated,f.used)                                    # the soil's own store covers part of it
     def test_normal_scenario_is_healthy(self):
         f=Farm('normal'); f.step()
         self.assertEqual(f.last,[])

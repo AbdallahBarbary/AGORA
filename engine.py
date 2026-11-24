@@ -15,6 +15,13 @@ TANK = {'normal': 100_000, 'one-zone': 50_000, 'shortage': 10_000, 'empty': 0}
 # 'one-zone': the other zones are well watered and North gets NORTH_DRY.
 MOISTURE = {'normal': (70, 100), 'one-zone': (80, 100), 'shortage': (15, 45), 'empty': (15, 45)}
 NORTH_DRY = (18, 36)
+# Plain-language names shown on the dashboard.
+SCENARIO_NAMES = {'normal': 'Healthy farm', 'one-zone': 'One dry zone, small tank',
+                  'shortage': 'Dry farm, little water', 'empty': 'Dry farm, empty tank'}
+# Demo option "start near the irrigation line": well-watered ranges start this many points below
+# the trigger instead, so a few cells need water within the first cycles. ASSUMPTION (demo setting).
+NEAR_LINE_MARGIN = 5
+MAX_ADVANCE = 480   # most cycles one request may advance (10 days)
 
 @dataclass(frozen=True)
 class Config:
@@ -50,13 +57,14 @@ class SimulatedIrrigation:
         return sum(allocations.values())
 
 class Farm:
-    def __init__(self, scenario='normal', seed=42, config=None, env=None, agent_config=None):
+    def __init__(self, scenario='normal', seed=42, config=None, env=None, agent_config=None, near_line=False):
         if scenario not in SCENARIOS: raise ValueError('Unknown scenario')
         self.config=config or Config(); self.rng=random.Random(seed)
         self.env=env or EnvironmentConfig(); self.weather=Weather(self.env,self.config.tick_minutes,seed); self.conditions=None
-        self.scenario=scenario; self.tick=0; self.used=0; self.logs=[]; self.last=[]; self.assessment=None
+        self.scenario=scenario; self.near_line=bool(near_line); self.tick=0; self.used=0; self.logs=[]; self.last=[]; self.assessment=None
         self.tank=TANK[scenario]
         self.initial_water=self.tank; self.added=0; self.manual=0; self.events=[]
+        self.evaporated=0.0; self.rain_kept=0.0   # litres, whole farm, since the start (soil water balance)
         self.sensor=SimulatedSensor(); self.actuator=SimulatedIrrigation()
         self.agent_config=agent_config or AgentConfig()
         self.agents=[ZoneAgent(z,self.agent_config) for z in ZONES]; self.manager=ManagerAgent(self.agent_config)
@@ -69,6 +77,7 @@ class Farm:
             for col in range(8):
                 zone=ZONES[(row//4)*2+col//4]; counts[zone]+=1
                 low,high=NORTH_DRY if scenario=='one-zone' and zone=='North' else MOISTURE[scenario]
+                if self.near_line and low>=self.config.trigger: low=self.config.trigger-NEAR_LINE_MARGIN
                 moisture=low+field[row][col]*(high-low)
                 self.cells.append(dict(id=f'{zone[0]}-{counts[zone]:02}',zone=zone,row=row,col=col,moisture=moisture,drying_scale=scales[row][col],history=[moisture]))
         self.readings=self.sensor.read(self.cells,self.rng,self.config)
@@ -85,8 +94,13 @@ class Farm:
         used=self.actuator.apply(self.cells,review['allocations'],self.config)   # only approved water is applied
         self.tank=max(0,self.tank-used); self.used+=used; self.tick=cycle
         self.last=[dict(d,tick=cycle) for d in review['decisions']]
+        lpp=self.config.litres_per_point
         for c in self.cells:  # weather acts after irrigation: rain adds, evaporation removes
-            c['moisture']=max(0,min(100,c['moisture']+conditions['rain']-self.drying_rate(c)*conditions['drying_factor']))
+            old=c['moisture']; dry=self.drying_rate(c)*conditions['drying_factor']
+            c['moisture']=max(0,min(100,old+conditions['rain']-dry))
+            evaporated=dry-max(0,dry-old-conditions['rain'])        # can't evaporate water the cell doesn't have
+            self.evaporated+=evaporated*lpp
+            self.rain_kept+=(c['moisture']-old+evaporated)*lpp      # rain that stayed; any excess drains away
             c['history'].append(c['moisture']); c['history']=c['history'][-60:]
         self.logs=(self.last+self.logs)[:500]; self.conditions=conditions
         return self.state()
@@ -117,8 +131,17 @@ class Farm:
             self.manual+=e.manual_water_litres; text=f'{cell} hand-watered (+{e.manual_water_litres:,.0f} L, outside the tank)'
         self.events=([dict(tick=self.tick,kind=kind,cell=cell,text=text)]+self.events)[:20]
 
+    def advance(self, cycles=1):
+        """Run several cycles in a row (for fast playback and 'skip a day'); same result as
+        calling step() that many times."""
+        if isinstance(cycles,bool) or not isinstance(cycles,int) or not 1<=cycles<=MAX_ADVANCE:
+            raise ValueError(f'Cycles must be a whole number from 1 to {MAX_ADVANCE}')
+        for _ in range(cycles): self.step()
+        return self.state()
+
     def state(self):
-        return dict(tick=self.tick,scenario=self.scenario,tank=self.tank,used=self.used,added=self.added,manual=self.manual,events=self.events,
+        return dict(tick=self.tick,scenario=self.scenario,near_line=self.near_line,scenarios=SCENARIO_NAMES,tank=self.tank,used=self.used,added=self.added,manual=self.manual,events=self.events,
+            evaporated=self.evaporated,rain_kept=self.rain_kept,
             config=asdict(self.config),agent_config=asdict(self.agent_config),
             cells=[dict(c,reading=self.readings[c['id']],plan=self.assessments.get(c['id'])) for c in self.cells],
             messages=[{k:m[k] for k in ('id','first_cycle','cycle','repeats','sender','recipient','kind','text')} for m in self.bus.feed[:150]],

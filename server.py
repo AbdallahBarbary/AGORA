@@ -29,13 +29,18 @@ class Handler(BaseHTTPRequestHandler):
             data=json.loads(self.rfile.read(length) or b'{}')
             if not isinstance(data,dict): raise ValueError('Expected a JSON object')
             with lock:
-                if self.path=='/api/step': farm.step()
-                elif self.path=='/api/reset': farm=Farm(data.get('scenario','normal'))
-                elif self.path=='/api/refill': farm.refill()
+                if self.path=='/api/step': farm.advance(data.get('cycles',1))
+                elif self.path=='/api/reset': farm=Farm(data.get('scenario','normal'),near_line=data.get('near_line') is True)
+                elif self.path=='/api/refill': farm.refill(_litres(data.get('litres')))
                 elif self.path=='/api/event': farm.trigger(data.get('type'),data.get('cell'))
                 else: return self.respond({'error':'Not found'},404)
                 self.respond(farm.state())
         except (ValueError,TypeError) as e: self.respond({'error':str(e)},400)
+def _litres(value):
+    """Optional refill amount from a request: a positive number, or None for the default."""
+    if value is None: return None
+    if isinstance(value,bool) or not isinstance(value,(int,float)): raise ValueError('Litres must be a number')
+    return value
 if __name__=='__main__':
     print('AGORA running at http://127.0.0.1:8765',flush=True)
     ThreadingHTTPServer(('127.0.0.1',8765),Handler).serve_forever()

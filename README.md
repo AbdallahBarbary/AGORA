@@ -21,14 +21,43 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 
 ## Demonstration
 
-1. Select **Normal (healthy farm)** (70–100%) and start the simulation. Cells dry about 4% a day on average (3.5–5% depending on the cell), a little faster in the afternoon heat, and the odd shower tops them up. The first refills come around day 2 (sensor noise lets a few cells at 60–65% through slightly early), more from day 3 as cells cross 60%. The 100,000 L tank lasts until about day 9.
-2. Select **One zone needs water**. Advance one cycle. The North agent recommends a full refill for its critical cells; the other zones recommend waiting. North needs more water to reach field capacity than the 50,000 L tank holds, so its recommendations are adjusted and the tank is used up in that first cycle. Watch the exchange in **Agent messages**.
-3. Select **Critical shortage**. Advance a cycle. Because the Manager announces scarce water, zone agents recommend only part of each gap. In the first cycle only critical cells act, since the rest are still collecting readings. The 10,000 L covers about 9% of what they ask for and runs out at once, so every later recommendation is rejected. The Manager report shows **water short**, the zones prioritised for critical cells, and the zones whose normal requests were reduced or delayed.
-4. Select **Empty tank**. Advance a cycle, add 5,000 L, then advance again. Irrigation resumes.
-5. Select any cell to inspect its history, its 1-hour forecast, the scores of each option, and the Manager's decision. Filter the log by zone or priority and export it (with the message feed) as JSON.
-6. While it runs, trigger **Heatwave** (+10 °C for 2 days) or **Drought** (no rain and drier air for 3 days) from the Events bar. In the cell inspector, **Water cell** hand-waters the selected cell (+1,000 L, outside the shared tank).
+**Guided demo.** Press **Guided demo** (top right). It walks through four steps, each with a caption explaining what to notice. The numbers in the captions are read from the run as it happens:
 
-Selecting a scenario resets the run immediately. Reset restarts the selected scenario with seed 42. Start runs cycles automatically; Next cycle pauses and advances exactly once. Speed controls wall-clock playback only; each cycle still represents 30 simulated minutes.
+1. **A healthy farm.** Every zone starts well watered except one patch just under the 60% line. Within a few cycles its zone agent recommends water, and the Manager approves.
+2. **A heatwave.** +10 °C for two days: the temperature card turns red and soil dries about a fifth faster. Two figures sit side by side: **evaporation from the soil** (about 37,000 L that day) and **irrigation from the tank** (about 28,000 L). The tank only refills cells that cross 60%, so the rest is drawn from water already stored in the soil.
+3. **A water shortage.** The demo skips ahead until the tank is empty, plus one more day. Cells drift below 60%, zones become stressed, and the Manager rejects recommendations with the report showing **water short**.
+4. **Recovery.** 50,000 L is added. The waiting recommendations are approved, and within six hours every dry cell is back to field capacity, using most of the new water. On an average day the soil loses about 31,000 L to evaporation (more in a heatwave), and over time the tank has to replace all of it.
+
+**Scenarios** (dropdown; selecting one resets the run with seed 42):
+
+| Name | Tank | Starting moisture |
+|---|---|---|
+| Healthy farm | 100,000 L | 70–100% |
+| One dry zone, small tank | 50,000 L | North 18–36%, the rest 80–100% |
+| Dry farm, little water | 10,000 L | 15–45% |
+| Dry farm, empty tank | 0 L | 15–45% |
+
+**Start some cells near the irrigation line** is off by default. Tick it to start the well-watered ranges at 55% instead (5 points under the line); a few cells then need water within the first cycles, so agents act within seconds. The dry ranges don't change. The box applies whenever you pick a scenario or press Reset. The guided demo always starts near the line on its own and leaves the box as you set it, so a plain **Healthy farm** run afterwards uses the usual ranges. A **Started near the line** tag on the farm map shows when the current run began that way.
+
+**Playback.** Each cycle is 30 simulated minutes, whatever the speed:
+
+| Speed | Wall-clock |
+|---|---|
+| Slow | 1 cycle a second (a day in 48 s) |
+| Normal | 4 cycles a second (a day in 12 s) |
+| Fast | a day in 4 s |
+| Fastest | a day in 2 s |
+
+**Next cycle** advances exactly one cycle and **Skip 1 day ⏭** advances 48; both pause playback. Speed only changes how fast you see it: results are the same at every speed and repeat exactly with the seed.
+
+**Other things to try:**
+
+- **Healthy farm** (usual start): cells dry about 4% a day on average (3.5–5% depending on the cell), a little faster in the afternoon heat, and the odd shower tops them up. The first refills come around day 2 (sensor noise lets a few cells at 60–65% through slightly early), more from day 3. The tank lasts until about day 9.
+- **One dry zone, small tank:** advance one cycle. The North agent recommends a full refill for its critical cells while the other zones wait. North needs more water than the 50,000 L tank holds, so its recommendations are adjusted and the tank is used up in that first cycle. Watch the exchange in **Agent messages**.
+- **Dry farm, little water:** because the Manager announces scarce water, zone agents recommend only part of each gap. In the first cycle only critical cells act, since the rest are still collecting readings. The 10,000 L covers about 9% of what they ask for and runs out at once. The Manager report shows **water short** and which zones were prioritised, reduced or delayed.
+- **Dry farm, empty tank:** advance a cycle, press **+ Add 5,000 L**, then advance again. Irrigation resumes.
+- Select any cell to inspect its history, its 1-hour forecast, the scores of each option, and the Manager's decision. Filter the log by zone or priority and export it (with the message feed) as JSON.
+- While it runs, trigger **Heatwave** (+10 °C for 2 days) or **Drought** (no rain and drier air for 3 days) from the Events bar. In the cell inspector, **Water cell** hand-waters the selected cell (+1,000 L, outside the shared tank).
 
 ## How it works
 
@@ -43,7 +72,7 @@ The dashboard shows the message feed and, in the decision log, each zone's recom
 
 `environment.py` holds the environment the agents live in: `EnvironmentConfig` (all weather and event numbers), `Weather` (daily temperature cycle, random rain, heatwave and drought), and `smooth_field` (starting moisture where neighbouring cells are similar), and `drying_scales` (per-cell drying multipliers in similar patches). Each cycle, irrigation is applied first, then rain adds moisture and evaporation removes `base drying rate × cell drying scale × weather drying factor`. The drying factor grows with temperature, drops while it rains, and rises during a drought. Weather uses its own random stream, so it never shifts the sensor noise.
 
-`server.py` exposes the state and step/reset/refill/event actions on a local HTTP server. `web/` provides the custom browser interface. State lives in memory and is shared between browser tabs. Restarting the server resets it. The simulation advances only while the browser runs it or the user requests a step.
+`server.py` exposes the state and step/reset/refill/event actions on a local HTTP server; a step can advance up to 480 cycles at once (that's how fast playback and **Skip 1 day** work). `web/` provides the custom browser interface. State lives in memory and is shared between browser tabs. Restarting the server resets it. The simulation advances only while the browser runs it or the user requests a step.
 
 `calibrate.py` re-derives the FITTED weather numbers from the NOAA data in `data/uscrn/` and compares them with the code. `test_engine.py` holds the unit tests. `data/` holds the downloaded calibration data (git-ignored, apart from its README).
 
@@ -84,6 +113,8 @@ Every tunable number in the project, taken from the code (`engine.py` `Config`, 
 | Water price | ×1 at 100,000 L or more, rising to ×3 when empty | ASSUMPTION | A full Normal tank counts as plentiful | `comfortable_tank`, `scarcity_price` |
 | Forecasting | 1 h ahead; 96-reading (2-day) window; trend from 48 readings; act from 4 readings unless critical; part of the gap = ½ | ASSUMPTION | | `AgentConfig` |
 | Feed folding | an unchanged repeat within 6 cycles (3 h) folds into one entry | ASSUMPTION | | `MessageBus.fold_cycles` |
+| Near-line start | well-watered ranges start 5 points under the trigger (55%) | ASSUMPTION (demo setting) | | `engine.NEAR_LINE_MARGIN` |
+| Guided demo | starts near the line; a heatwave day; until the tank is empty + 1 day; then +50,000 L | ASSUMPTION (demo setting) | | `web/app.js` `DEMO` |
 
 ### Numbers still without a label or a precise source
 
