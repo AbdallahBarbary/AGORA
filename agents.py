@@ -1,8 +1,8 @@
 """The agents. Zone agents forecast and recommend; the Manager is the only one that decides.
 They communicate only through the message bus.
 
-Every number in AgentConfig is a PROVISIONAL PLACEHOLDER chosen for a readable
-demonstration. They will be replaced by values fitted from real data.
+The utility weights in AgentConfig are still PROVISIONAL PLACEHOLDERS (not yet fitted).
+Water costs are per moisture point, so decisions don't depend on how many litres a point is.
 """
 from dataclasses import dataclass
 from forecast import TrendForecaster
@@ -20,13 +20,13 @@ class AgentConfig:
     benefit_weight: float = .6      # per moisture point moved toward the target
     urgency_weight: float = 1.5     # per point of danger avoided below the request trigger
     critical_weight: float = 2      # points below the critical level count this much extra danger
-    water_cost: float = 1.0         # per litre when water is plentiful
-    scarcity_cost: float = 1.5      # extra cost per litre when the tank is empty
+    water_cost: float = .5          # per moisture point of water when it is plentiful
+    scarcity_cost: float = .75      # extra cost per moisture point when the tank is empty
     dispatch_cost: float = 3        # fixed cost of any irrigation, so small top-ups wait
                                     # (with plenty of water, agents act once the forecast is below ~39%)
     part_fraction: float = .5       # share of the gap in the "part of the gap" option
-    # --- Manager's scarcity signal (PROVISIONAL placeholder) ---
-    comfortable_tank: float = 500   # litres; at or above this, water counts as plentiful
+    # --- Manager's scarcity signal ---
+    comfortable_tank: float = 100_000  # ASSUMPTION: litres; a full Normal tank counts as plentiful
 
 
 class ZoneAgent:
@@ -38,7 +38,7 @@ class ZoneAgent:
         self.forecaster = forecaster or TrendForecaster()   # anything with Forecaster.predict()
         self.memory = {}         # cell id -> [(reading, irrigation points since previous reading)]
         self.pending = {}        # cell id -> approved points not yet seen in a reading
-        self.cost_per_litre = self.ac.water_cost
+        self.cost_per_point = self.ac.water_cost
 
     def act(self, bus, cycle, cells, readings, config):
         """One cycle: read the inbox, assess every cell, send recommendations and a zone status.
@@ -49,7 +49,7 @@ class ZoneAgent:
         recommendations = [a for a in assessments if a['option'] != 'wait']
         for r in recommendations:
             bus.send(cycle, self.name, MANAGER, 'recommendation', r,
-                     f"{r['cell']}: {OPTIONS[r['option']].lower()}, {r['amount']:.1f} L ({r['priority']}). "
+                     f"{r['cell']}: {OPTIONS[r['option']].lower()}, {r['amount']:,.0f} L ({r['priority']}). "
                      f"Forecast {r['forecast']:.1f}% in 1 h.")
         status = self.zone_status(mine, readings, config, len(recommendations))
         bus.send(cycle, self.name, MANAGER, 'zone-status', status,
@@ -61,7 +61,7 @@ class ZoneAgent:
         """Take in the Manager's tank broadcast and last cycle's decisions."""
         for m in bus.receive(self.name):
             if m['kind'] == 'tank-status':
-                self.cost_per_litre = m['body']['cost_per_litre']
+                self.cost_per_point = m['body']['cost_per_point']
             elif m['kind'] == 'decision':
                 self.pending[m['body']['cell']] = m['body']['allocated'] / config.litres_per_point
 
@@ -87,13 +87,14 @@ class ZoneAgent:
         """Score of adding `litres` now, relative to waiting: benefit + urgency - water cost."""
         if not litres:
             return 0.0
-        after = min(100.0, forecast + litres / config.litres_per_point)
+        points = litres / config.litres_per_point
+        after = min(100.0, forecast + points)
         deficit = lambda m: max(0.0, config.target - m)
         danger = lambda m: max(0.0, config.trigger - m) + self.ac.critical_weight * max(0.0, config.critical - m)
         benefit = deficit(forecast) - deficit(after)     # points closer to the target
         urgency = danger(forecast) - danger(after)       # danger points avoided
         return (self.ac.benefit_weight * benefit + self.ac.urgency_weight * urgency
-                - self.cost_per_litre * litres - self.ac.dispatch_cost)
+                - self.cost_per_point * points - self.ac.dispatch_cost)
 
     def rationale(self, a):
         """One readable sentence explaining the chosen option."""
@@ -124,8 +125,8 @@ class ManagerAgent:
         scarcity = max(0.0, 1 - tank / self.ac.comfortable_tank)
         cost = self.ac.water_cost + self.ac.scarcity_cost * scarcity
         mood = 'plentiful' if scarcity == 0 else 'scarce' if scarcity > .5 else 'limited'
-        bus.send(cycle, MANAGER, 'all', 'tank-status', dict(tank=tank, scarcity=scarcity, cost_per_litre=cost),
-                 f'Tank {tank:.1f} L. Water is {mood}: cost {cost:.2f} per litre.')
+        bus.send(cycle, MANAGER, 'all', 'tank-status', dict(tank=tank, scarcity=scarcity, cost_per_point=cost),
+                 f'Tank {tank:,.0f} L. Water is {mood}: cost {cost:.2f} per moisture point.')
 
     def review(self, bus, cycle, tank):
         """Read this cycle's recommendations and zone statuses, decide each one, reply to each zone."""
@@ -136,7 +137,7 @@ class ManagerAgent:
         decisions = [self.decide(r, allocations[r['cell']], tank) for r in recommendations]
         for d in decisions:
             bus.send(cycle, MANAGER, d['zone'], 'decision', d,
-                     f"{d['cell']}: {d['status']} {d['allocated']:.1f} of {d['amount']:.1f} L. {d['reason']}")
+                     f"{d['cell']}: {d['status']} {d['allocated']:,.0f} of {d['amount']:,.0f} L. {d['reason']}")
         assessment = dict(self.assess(statuses), shortage=self.explain_shortage(recommendations, allocations, tank))
         return dict(decisions=decisions, allocations=allocations, assessment=assessment)
 
@@ -192,7 +193,7 @@ class ManagerAgent:
         prioritised = zones(critical)
         reduced = zones(r for r in normal if 1e-8 < got(r) < r['amount']-1e-8)    # got some water
         delayed = zones(r for r in normal if got(r) <= 1e-8)                      # got none this cycle
-        parts = [f'Water short: {requested:.1f} L requested, {available:.1f} L available.']
+        parts = [f'Water short: {requested:,.0f} L requested, {available:,.0f} L available.']
         if prioritised: parts.append(f'Prioritised for critical cells: {", ".join(prioritised)}.')
         if coverage < 1-1e-8: parts.append(f'Critical requests only {coverage:.0%} covered.')
         if reduced: parts.append(f'Normal requests reduced: {", ".join(reduced)}.')

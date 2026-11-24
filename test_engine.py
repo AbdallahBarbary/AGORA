@@ -1,8 +1,8 @@
 import unittest
 from dataclasses import replace
-from environment import EnvironmentConfig, drying_scales
+from environment import EnvironmentConfig, Weather, drying_scales
 import random
-from engine import Farm, MOISTURE, SCENARIOS, Config
+from engine import Farm, MOISTURE, SCENARIOS, TANK, Config
 from agents import ManagerAgent, ZoneAgent, MANAGER
 from forecast import TrendForecaster
 from messaging import MessageBus
@@ -76,7 +76,7 @@ class EngineTests(unittest.TestCase):
         x=explain(45)   # half of the critical needs, nothing for normal
         self.assertEqual((x['prioritised'],x['reduced'],x['delayed']),(['North','East'],[],['West','South']))
         self.assertAlmostEqual(x['critical_coverage'],.5)
-        self.assertEqual(x['message'],'Water short: 130.0 L requested, 45.0 L available. Prioritised for critical cells: North, East. '
+        self.assertEqual(x['message'],'Water short: 130 L requested, 45 L available. Prioritised for critical cells: North, East. '
                          'Critical requests only 50% covered. Normal requests delayed: West, South.')
         x=explain(100)  # critical covered, 10 L shared by the normal requests
         self.assertEqual((x['reduced'],x['delayed'],x['critical_coverage']),(['West','South'],[],1.0))
@@ -88,7 +88,7 @@ class EngineTests(unittest.TestCase):
         crit={r['zone'] for r in f.last if r['priority']=='critical'}
         waiting={r['zone'] for r in f.last if r['priority']=='normal' and r['status']=='rejected'}
         self.assertEqual(set(x['prioritised']),crit); self.assertEqual(set(x['delayed']),waiting)
-        self.assertAlmostEqual(x['available'],100); self.assertAlmostEqual(f.used,100)  # whole tank, never more
+        self.assertAlmostEqual(x['available'],TANK['shortage']); self.assertAlmostEqual(f.used,TANK['shortage'])  # whole tank, never more
         self.assertTrue(x['message'].startswith('Water short:'))
         for scenario in ('normal','one-zone'):
             f=Farm(scenario); f.step(); self.assertIsNone(f.state()['assessment']['shortage'])
@@ -122,22 +122,23 @@ class EngineTests(unittest.TestCase):
         self.assertEqual((c['option'],list(c['options'])),('wait',['wait']))
         self.assertIn('no water needed',c['rationale'])
     def test_utility_balances_benefit_urgency_and_cost(self):
-        cfg=Config(); z=ZoneAgent('North'); u=lambda f,l:z.utility(f,l,cfg)
+        cfg=Config(); z=ZoneAgent('North'); u=lambda f,points:z.utility(f,points*cfg.litres_per_point,cfg)
         self.assertEqual(u(20,0),0)                       # waiting is the baseline
-        self.assertGreater(u(20,10),u(35,10))             # the same water is worth more to a drier cell (urgency)
-        self.assertGreater(u(45,5),u(50,5))               # benefit: further below target gains more
-        self.assertLess(u(50,2),0)                        # a small top-up near target isn't worth the cost
-        before=u(20,10); z.cost_per_litre*=2; self.assertLess(u(20,10),before)   # dearer water lowers the score
+        self.assertGreater(u(20,20),u(35,20))             # the same water is worth more to a drier cell (urgency)
+        self.assertGreater(u(45,10),u(50,10))             # benefit: water past the target gains nothing
+        self.assertLess(u(50,4),0)                        # a small top-up near target isn't worth the cost
+        before=u(20,20); z.cost_per_point*=2; self.assertLess(u(20,20),before)   # dearer water lowers the score
     def test_scarcity_makes_agents_ask_for_less(self):
         cfg=Config(); chosen={}
-        for tank in (1000,0):
+        full=TANK['normal']
+        for tank in (full,0):
             bus=MessageBus()
             for n in (MANAGER,'North'): bus.register(n)
             ManagerAgent().announce(bus,1,tank)
             a=ZoneAgent('North').act(bus,1,[dict(id='N-01',zone='North')],{'N-01':20},cfg)[0]
             chosen[tank]=(a['option'],a['amount'])
-        self.assertEqual(chosen[1000][0],'full'); self.assertEqual(chosen[0][0],'part')
-        self.assertLess(chosen[0][1],chosen[1000][1])
+        self.assertEqual(chosen[full][0],'full'); self.assertEqual(chosen[0][0],'part')
+        self.assertLess(chosen[0][1],chosen[full][1])
     def test_message_bus(self):
         bus=MessageBus(keep=3)
         for n in ('Manager','North','East'): bus.register(n)
@@ -181,9 +182,10 @@ class EngineTests(unittest.TestCase):
         s=f.state(); self.assertTrue(s['messages']); self.assertNotIn('body',s['messages'][0])
         self.assertTrue(all(c['plan'] for c in s['cells']))
     def test_temperature_cycle(self):
-        w=Farm().weather; temps=[w.temperature(t) for t in range(48)]
-        self.assertEqual(temps.index(max(temps)),28)  # 14:00
-        self.assertEqual(temps.index(min(temps)),4)   # 02:00
+        w=Farm().weather; temps=[w.temperature(t) for t in range(48)]; peak=w.env.peak_hour
+        self.assertEqual(temps.index(max(temps)),round(peak*2))           # 15:30, nearest cycle to 15:42
+        self.assertEqual(temps.index(min(temps)),round((peak-12)%24*2))   # 03:30
+        self.assertAlmostEqual(max(temps)-min(temps),2*w.env.temp_amplitude,delta=.1)
         self.assertAlmostEqual(sum(temps)/48,w.env.mean_temp)
         self.assertAlmostEqual(w.temperature(7),w.temperature(7+48))
     def test_hotter_dries_faster(self):
@@ -203,9 +205,10 @@ class EngineTests(unittest.TestCase):
     def test_rain_is_occasional(self):
         dry=Farm(env=replace(EnvironmentConfig(),rain_chance=0))
         for _ in range(48): dry.step(); self.assertEqual(dry.conditions['rain'],0)
-        f=Farm(); rainy=0
-        for _ in range(480): f.step(); rainy+=f.conditions['rain']>0
-        self.assertTrue(0<rainy<480*.3)  # some showers over 10 days, but mostly dry
+        w=Weather(EnvironmentConfig(),30,42); rain=[w.advance(t)['rain'] for t in range(48*365)]
+        wet=[r for r in rain if r]; lo,hi=w.env.rain_points
+        self.assertTrue(.01<len(wet)/len(rain)<.03)   # about 1.8% of cycles expected
+        self.assertTrue(all(lo<=r<=hi for r in wet))
     def test_start_moisture_is_smooth(self):
         for scenario in ('normal','balanced','shortage'):
             f=Farm(scenario); low,high=MOISTURE[scenario]; m={(c['row'],c['col']):c['moisture'] for c in f.cells}

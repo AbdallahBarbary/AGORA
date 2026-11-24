@@ -31,7 +31,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 if self.path=='/api/step': farm.step()
                 elif self.path=='/api/reset': farm=Farm(data.get('scenario','normal'))
-                elif self.path=='/api/refill': farm.refill(250)
+                elif self.path=='/api/refill': farm.refill()
                 elif self.path=='/api/event': farm.trigger(data.get('type'),data.get('cell'))
                 else: return self.respond({'error':'Not found'},404)
                 self.respond(farm.state())

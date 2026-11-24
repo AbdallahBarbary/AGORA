@@ -1,7 +1,9 @@
 """Simulated environment: weather that acts on the farm, independent of the agents.
 
-Every number in EnvironmentConfig is a PROVISIONAL PLACEHOLDER chosen to make the
-demonstration readable. They will be replaced by values fitted from real data.
+Each number in EnvironmentConfig is labelled with where it comes from:
+  FITTED      estimated from real data (source named on the line; data described in data/README.md)
+  REFERENCE   taken from a published reference
+  ASSUMPTION  a modelling choice with no data behind it yet
 """
 from dataclasses import dataclass
 import math
@@ -10,28 +12,31 @@ import random
 
 @dataclass(frozen=True)
 class EnvironmentConfig:
-    # --- Temperature (PROVISIONAL placeholders) ---
-    mean_temp: float = 20            # °C, daily average
-    temp_amplitude: float = 8        # °C, half the day/night swing (12–28 °C)
-    peak_hour: float = 14            # hottest hour of the day
-    # --- Drying (PROVISIONAL placeholders) ---
-    base_drying_rate: float = 1.0    # points per cycle at mean_temp, farm average; to be fitted from real data
-    drying_spread: float = .2        # cell scales span about 1 ± this (0.8–1.2); an assumption, not fitted
-    drying_per_degree: float = .05   # +5% drying per °C above mean_temp, -5% below
-    min_drying_factor: float = .2    # cells never stop drying completely
-    # --- Rain (PROVISIONAL placeholders) ---
-    rain_chance: float = .02         # chance a shower starts in a dry 30-minute cycle (~1 per day)
-    rain_ticks: tuple = (2, 6)       # shower length in cycles (1–3 hours)
-    rain_points: tuple = (1.0, 3.0)  # moisture points added to every cell per rainy cycle
-    rain_drying_factor: float = .3   # evaporation multiplier while it rains (cloudy, humid air)
-    # --- Starting moisture (PROVISIONAL placeholder) ---
-    smoothing_passes: int = 3        # more passes = larger patches of similar moisture
-    # --- Events triggered from the dashboard (PROVISIONAL placeholders) ---
+    # --- Temperature: FITTED, NOAA USCRN hourly data, Tucson 11 W, 2024-2025 ---
+    mean_temp: float = 22.6          # °C, daily average
+    temp_amplitude: float = 5.6      # °C, half the day/night swing (17.0–28.2 °C)
+    peak_hour: float = 15.7          # hottest time of day, local standard time
+    # --- Drying ---
+    base_drying_rate: float = .09    # REFERENCE: points per cycle at mean_temp, farm average. FAO-56 tomato
+                                     # water use ~5 mm/day / 112 mm total available water; consistent with USCRN dry-down
+    drying_spread: float = .2        # ASSUMPTION: cell scales span about 1 ± this (0.8–1.2)
+    drying_per_degree: float = .02   # FITTED: +2% drying per °C above mean_temp, -2% below. USCRN Tucson
+                                     # day-to-day soil moisture loss on rain-free days (noisy, range 1–3.5%)
+    min_drying_factor: float = .2    # ASSUMPTION: cells never stop drying completely
+    # --- Rain: FITTED, NOAA USCRN hourly precipitation, Tucson 11 W, 2024-2025 ---
+    rain_chance: float = .0037       # chance a shower starts in a dry 30-minute cycle (~1 every 5.6 days)
+    rain_ticks: tuple = (2, 8)       # shower length in cycles (1–4 hours)
+    rain_points: tuple = (.45, .71)  # moisture points added to every cell per rainy cycle
+    rain_drying_factor: float = .3   # ASSUMPTION: evaporation multiplier while it rains (cloudy, humid air)
+    # --- Starting moisture ---
+    smoothing_passes: int = 3        # ASSUMPTION: more passes = larger patches of similar moisture
+    # --- Events triggered from the dashboard: all ASSUMPTIONS ---
     heatwave_extra_temp: float = 10  # °C added on top of the daily cycle
     heatwave_ticks: int = 96         # 2 days
     drought_ticks: int = 144         # 3 days with no rain
     drought_drying_factor: float = 1.5  # dry air speeds up evaporation
-    manual_water_litres: float = 10  # hand-watering one cell, from outside the shared tank
+    manual_water_litres: float = 1000   # hand-watering one cell (~9 points), from outside the shared tank
+    refill_litres: float = 5000      # the dashboard's "Add water" refill of the shared tank
 
 
 def smooth_field(rng, rows, cols, passes):

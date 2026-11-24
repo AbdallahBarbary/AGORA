@@ -8,8 +8,9 @@ from messaging import MessageBus
 ZONES = ('North', 'East', 'West', 'South')
 EVENTS = ('heatwave', 'drought', 'water')
 SCENARIOS = ('normal', 'balanced', 'one-zone', 'shortage', 'empty')
-# Starting tank (L) and moisture range per scenario. 'one-zone' gives North its own range.
-TANK = {'normal': 1000, 'balanced': 1000, 'one-zone': 400, 'shortage': 100, 'empty': 0}
+# Starting tank (L) per scenario: ASSUMPTIONS sized for 100 m2 cells at 112 L per moisture point.
+TANK = {'normal': 100_000, 'balanced': 100_000, 'one-zone': 50_000, 'shortage': 10_000, 'empty': 0}
+# Starting moisture range per scenario (not yet rescaled). 'one-zone' gives North its own range.
 MOISTURE = {'normal': (48, 62), 'balanced': (30, 65), 'one-zone': (60, 75), 'shortage': (12, 32), 'empty': (12, 32)}
 
 @dataclass(frozen=True)
@@ -17,7 +18,8 @@ class Config:
     target: float = 55
     trigger: float = 40
     critical: float = 25
-    litres_per_point: float = .5
+    litres_per_point: float = 112   # REFERENCE: 100 m2 cell x 0.7 m tomato root depth x 160 mm/m available
+                                    # water for loam = 11,200 L of available water = 100 points
     sensor_noise: float = .6
     tick_minutes: int = 30
 
@@ -78,8 +80,10 @@ class Farm:
         The weather's drying factor then adjusts this for heat, rain and drought."""
         return self.env.base_drying_rate*cell['drying_scale']
 
-    def refill(self, amount=250):
-        if not 0 < amount <= 10000: raise ValueError('Refill must be between 0 and 10,000 L')
+    def refill(self, amount=None):
+        """Add water to the shared tank; defaults to the dashboard's refill size."""
+        amount=self.env.refill_litres if amount is None else amount
+        if not 0 < amount <= 1_000_000: raise ValueError('Refill must be between 0 and 1,000,000 L')
         self.tank+=amount; self.added+=amount
 
     def trigger(self, kind, cell=None):
@@ -94,7 +98,7 @@ class Farm:
             c=next((c for c in self.cells if c['id']==cell),None)
             if c is None: raise ValueError('Unknown cell')
             c['moisture']=min(100,c['moisture']+e.manual_water_litres/self.config.litres_per_point)
-            self.manual+=e.manual_water_litres; text=f'{cell} hand-watered (+{e.manual_water_litres:g} L, outside the tank)'
+            self.manual+=e.manual_water_litres; text=f'{cell} hand-watered (+{e.manual_water_litres:,.0f} L, outside the tank)'
         self.events=([dict(tick=self.tick,kind=kind,cell=cell,text=text)]+self.events)[:20]
 
     def state(self):
