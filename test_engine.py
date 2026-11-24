@@ -1,5 +1,5 @@
 import unittest
-from engine import Farm, ManagerAgent
+from engine import Farm, ManagerAgent, ZoneAgent
 
 class EngineTests(unittest.TestCase):
     def test_grid_and_repeatability(self):
@@ -38,6 +38,29 @@ class EngineTests(unittest.TestCase):
                     expected=max(0,min(100,old[c['id']]+allocation/f.config.litres_per_point)-c['drying'])
                     self.assertAlmostEqual(c['moisture'],expected)
                     self.assertTrue(0<=c['moisture']<=100)
+    def test_assessment_local_one_zone(self):
+        f=Farm('one-zone'); self.assertIsNone(f.state()['assessment']); f.step()
+        a=f.state()['assessment']
+        self.assertEqual((a['level'],a['stressed']),('local',['North']))
+        self.assertEqual(a['message'],'Local problem: North.')
+        self.assertEqual([z['name'] for z in f.state()['zones'] if z['stressed']],['North'])
+    def test_assessment_farm_wide_all_dry(self):
+        for scenario in ('shortage','empty'):
+            f=Farm(scenario); f.step()
+            self.assertEqual(f.assessment['level'],'farm-wide')
+            self.assertEqual(f.assessment['stressed'],['North','East','West','South'])
+            self.assertEqual(f.assessment['message'],'Farm-wide: all 4 zones stressed.')
+    def test_stressed_threshold(self):
+        f=Farm(); north=[c for c in f.cells if c['zone']=='North']
+        for dry in (4,5):
+            readings={c['id']:(30 if i<dry else 60) for i,c in enumerate(north)}
+            self.assertEqual(ZoneAgent('North').report(north,readings,f.config)['stressed'],dry>4)
+    def test_assessment_levels(self):
+        m=ManagerAgent(); rep=lambda n:[dict(zone=z,stressed=i<n) for i,z in enumerate(('North','East','West','South'))]
+        self.assertEqual([m.assess(rep(n))['level'] for n in range(5)],['normal','local','local','farm-wide','farm-wide'])
+        self.assertEqual(m.assess(rep(0))['message'],'Normal: no zones stressed.')
+        self.assertEqual(m.assess(rep(2))['message'],'Local problem: North, East.')
+        self.assertEqual(m.assess(rep(3))['message'],'Farm-wide: 3 of 4 zones stressed (North, East, West).')
     def test_bad_scenario(self):
         with self.assertRaises(ValueError): Farm('unknown')
 

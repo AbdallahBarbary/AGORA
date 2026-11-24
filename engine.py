@@ -25,8 +25,25 @@ class ZoneAgent:
                      amount=(config.target-readings[c['id']])*config.litres_per_point,
                      priority='critical' if readings[c['id']] < config.critical else 'normal')
                 for c in cells if c['zone']==self.name and readings[c['id']] < config.trigger]
+    def report(self, cells, readings, config):
+        """Requests plus a stressed flag: more than a quarter of the zone's cells are below the trigger."""
+        requests=self.request(cells, readings, config)
+        size=sum(c['zone']==self.name for c in cells)
+        return dict(zone=self.name, requests=requests, dry=len(requests), stressed=len(requests) > size/4)
 
 class ManagerAgent:
+    def assess(self, reports):
+        """3-4 stressed zones: farm-wide; 1-2: local; 0: normal."""
+        stressed=[r['zone'] for r in reports if r['stressed']]
+        if len(stressed) >= 3:
+            level='farm-wide'
+            message='Farm-wide: all 4 zones stressed.' if len(stressed)==4 else f'Farm-wide: 3 of 4 zones stressed ({", ".join(stressed)}).'
+        elif stressed:
+            level='local'; message=f'Local problem: {", ".join(stressed)}.'
+        else:
+            level='normal'; message='Normal: no zones stressed.'
+        return dict(level=level, stressed=stressed, message=message)
+
     def allocate(self, requests, tank):
         allocations = {r['cell']: 0.0 for r in requests}
         remaining = tank
@@ -48,7 +65,7 @@ class Farm:
     def __init__(self, scenario='balanced', seed=42, config=None):
         if scenario not in SCENARIOS: raise ValueError('Unknown scenario')
         self.config=config or Config(); self.rng=random.Random(seed)
-        self.scenario=scenario; self.tick=0; self.used=0; self.logs=[]; self.last=[]
+        self.scenario=scenario; self.tick=0; self.used=0; self.logs=[]; self.last=[]; self.assessment=None
         self.tank={'balanced':1000,'one-zone':400,'shortage':100,'empty':0}[scenario]
         self.initial_water=self.tank; self.added=0
         self.sensor=SimulatedSensor(); self.actuator=SimulatedIrrigation()
@@ -66,7 +83,9 @@ class Farm:
 
     def step(self):
         self.readings=self.sensor.read(self.cells,self.rng,self.config)
-        requests=[r for agent in self.agents for r in agent.request(self.cells,self.readings,self.config)]
+        reports=[agent.report(self.cells,self.readings,self.config) for agent in self.agents]
+        requests=[r for report in reports for r in report['requests']]
+        self.assessment=self.manager.assess(reports)
         allocations=self.manager.allocate(requests,self.tank)
         used=self.actuator.apply(self.cells,allocations,self.config)
         self.tank=max(0,self.tank-used); self.used+=used; self.tick+=1
@@ -89,7 +108,8 @@ class Farm:
     def state(self):
         return dict(tick=self.tick,scenario=self.scenario,tank=self.tank,used=self.used,added=self.added,
             config=asdict(self.config),cells=[dict(c,reading=self.readings[c['id']]) for c in self.cells],
-            requests=self.last,logs=self.logs,zones=[dict(name=z,
+            requests=self.last,logs=self.logs,assessment=self.assessment,zones=[dict(name=z,
+                stressed=bool(self.assessment) and z in self.assessment['stressed'],
                 critical=sum(c['moisture']<self.config.critical for c in self.cells if c['zone']==z),
                 requested=sum(r['amount'] for r in self.last if r['zone']==z),
                 allocated=sum(r['allocated'] for r in self.last if r['zone']==z)) for z in ZONES])
