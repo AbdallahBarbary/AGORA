@@ -2,7 +2,9 @@ import unittest
 from dataclasses import replace
 from environment import EnvironmentConfig, Weather, drying_scales
 import random
+from collections import Counter
 from engine import Farm, MOISTURE, SCENARIOS, TANK, Config
+from agents import AgentConfig
 from agents import ManagerAgent, ZoneAgent, MANAGER
 from forecast import TrendForecaster
 from messaging import MessageBus
@@ -17,8 +19,9 @@ class EngineTests(unittest.TestCase):
         for z in a.agents: self.assertEqual(sum(c['zone']==z.name for c in a.cells),16)
     def test_one_zone(self):
         f=Farm('one-zone'); f.step()
-        self.assertEqual({r['zone'] for r in f.last},{'North'})
-        self.assertTrue(all(r['status']=='approved' for r in f.last))
+        self.assertEqual({r['zone'] for r in f.last},{'North'})                  # only the dry zone asks
+        self.assertTrue(all(r['priority']=='critical' for r in f.last))         # cycle 1: only critical cells act
+        self.assertAlmostEqual(f.used,min(TANK['one-zone'],sum(r['amount'] for r in f.last)))   # never over the tank
     def test_shortage_priority_and_proportion(self):
         rs=[dict(cell='a',priority='critical',amount=30),dict(cell='b',priority='critical',amount=60),dict(cell='c',priority='normal',amount=20)]
         a=ManagerAgent().allocate(rs,45)
@@ -90,8 +93,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(set(x['prioritised']),crit); self.assertEqual(set(x['delayed']),waiting)
         self.assertAlmostEqual(x['available'],TANK['shortage']); self.assertAlmostEqual(f.used,TANK['shortage'])  # whole tank, never more
         self.assertTrue(x['message'].startswith('Water short:'))
-        for scenario in ('normal','one-zone'):
-            f=Farm(scenario); f.step(); self.assertIsNone(f.state()['assessment']['shortage'])
+        f=Farm('normal'); f.step(); self.assertIsNone(f.state()['assessment']['shortage'])
     def test_shortage_reported_exactly_when_requests_cut(self):
         for scenario in SCENARIOS:
             f=Farm(scenario)
@@ -100,12 +102,22 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(f.assessment['shortage'] is not None,any(r['status']!='approved' for r in f.last))
     # --- Stage 3: forecasting zone agents, message bus, Manager review ---
     def test_trend_forecaster(self):
-        tf=TrendForecaster()
-        self.assertEqual(tf.predict([50,49,48,47],[0,0,0],2),45)       # steady drying, 1 h ahead
-        self.assertEqual(tf.predict([40,55,54,53],[16,0,0],2),51)      # known irrigation is not mistaken for a trend
-        self.assertEqual(tf.predict([50,49,52,51],[0,0,0],2),49)       # one rain jump is ignored (median)
-        self.assertEqual(tf.predict([30],[],2),30)                     # no trend yet: no change
-        self.assertEqual(tf.predict([2,1],[0],5),0)                    # clamped
+        tf=TrendForecaster(min_trend=3)
+        self.assertAlmostEqual(tf.predict([50,49,48,47],[0,0,0],2),45)    # steady drying, 1 h ahead
+        self.assertAlmostEqual(tf.predict([50,49,48,47],[0,0,0],0),47)    # horizon 0: estimate now
+        self.assertAlmostEqual(tf.predict([40,55,54,53],[16,0,0],2),51)   # known irrigation is not mistaken for a trend
+        self.assertAlmostEqual(TrendForecaster(min_trend=8).predict([30,34],[0],2),32)   # too few: average, no trend
+        self.assertEqual(tf.predict([3,2,1],[0,0],5),0)                    # clamped
+    def test_forecaster_smooths_sensor_noise(self):
+        cfg=Config(); rng=random.Random(1); n=AgentConfig().forecast_window; tf=TrendForecaster()
+        errors_fit,errors_raw=[],[]
+        for trial in range(30):
+            truth=[80-.09*i for i in range(n+2)]
+            readings=[t+rng.uniform(-cfg.sensor_noise,cfg.sensor_noise) for t in truth[:n]]
+            errors_fit.append(abs(tf.predict(readings,[0]*(n-1),2)-truth[n+1]))
+            errors_raw.append(abs(readings[-1]-truth[n+1]))
+        self.assertLess(max(errors_fit),6)                         # +-9.4 noise shrinks to a few points
+        self.assertLess(sum(errors_fit)/30,sum(errors_raw)/30/3)   # far better than trusting the last reading
     def test_forecaster_is_pluggable(self):
         class Pessimist:
             def predict(self,readings,irrigation,horizon): return 10.0
@@ -113,21 +125,35 @@ class EngineTests(unittest.TestCase):
         self.assertEqual((a['forecast'],a['priority']),(10.0,'critical'))
         self.assertNotEqual(a['option'],'wait')
     def test_zone_agent_acts_on_forecast_not_threshold(self):
-        cfg=Config(); falling=ZoneAgent('North'); steady=ZoneAgent('North')
-        for r in (48,46,44,42): a=falling.assess_cell('N-01',r,cfg)   # above the 40% trigger but dropping fast
-        self.assertLess(a['forecast'],cfg.trigger); self.assertNotEqual(a['option'],'wait')
-        for r in (42,42,42,42): b=steady.assess_cell('N-01',r,cfg)    # same reading, stable
+        cfg=Config(); quick=replace(AgentConfig(),min_trend_readings=3)
+        falling=ZoneAgent('North',quick); steady=ZoneAgent('North',quick)
+        for r in range(80,61,-2): a=falling.assess_cell('N-01',r,cfg)   # still above the 60% trigger, dropping fast
+        self.assertGreater(a['level'],cfg.trigger); self.assertLess(a['forecast'],cfg.trigger)
+        self.assertNotEqual(a['option'],'wait')
+        for _ in range(10): b=steady.assess_cell('N-01',62,cfg)          # same level, stable
         self.assertEqual(b['option'],'wait'); self.assertIn('waiting scores best',b['rationale'])
-        c=steady.assess_cell('N-02',70,cfg)
+        for _ in range(4): c=steady.assess_cell('N-02',100,cfg)
         self.assertEqual((c['option'],list(c['options'])),('wait',['wait']))
         self.assertIn('no water needed',c['rationale'])
+    def test_agents_wait_for_enough_readings(self):
+        cfg=Config(); z=ZoneAgent('North'); need=z.ac.min_readings
+        for i in range(need-1):
+            a=z.assess_cell('N-01',45,cfg)             # below the trigger, but too little evidence yet
+            self.assertEqual(a['option'],'wait'); self.assertIn('readings so far',a['rationale'])
+        self.assertNotEqual(z.assess_cell('N-01',45,cfg)['option'],'wait')
+        self.assertNotEqual(ZoneAgent('North').assess_cell('N-02',10,cfg)['option'],'wait')   # critical: act at once
+        f=Farm('normal')
+        for _ in range(need-1): f.step(); self.assertEqual(f.last,[])
     def test_utility_balances_benefit_urgency_and_cost(self):
         cfg=Config(); z=ZoneAgent('North'); u=lambda f,points:z.utility(f,points*cfg.litres_per_point,cfg)
+        ac=AgentConfig(); self.assertEqual((ac.benefit_weight,ac.urgency_weight,ac.cost_weight),(.5,.3,.2))   # the deck
         self.assertEqual(u(20,0),0)                       # waiting is the baseline
-        self.assertGreater(u(20,20),u(35,20))             # the same water is worth more to a drier cell (urgency)
-        self.assertGreater(u(45,10),u(50,10))             # benefit: water past the target gains nothing
-        self.assertLess(u(50,4),0)                        # a small top-up near target isn't worth the cost
-        before=u(20,20); z.cost_per_point*=2; self.assertLess(u(20,20),before)   # dearer water lowers the score
+        self.assertGreater(u(20,40),u(50,40))             # the same water is worth more to a drier cell (urgency)
+        self.assertGreater(u(50,50),u(50,10))             # refilling to field capacity beats a token top-up
+        self.assertLess(u(65,35),0)                       # above the trigger the crop isn't stressed: not worth it
+        self.assertAlmostEqual(u(40,60),.5*.6+.3*20/90-.2*.6)   # 0.5 benefit + 0.3 urgency - 0.2 cost
+        before=u(20,40); z.price*=2; self.assertLess(u(20,40),before)   # dearer water lowers the score
+        self.assertEqual((z.stress(60,cfg),z.stress(0,cfg)),(0,1))
     def test_scarcity_makes_agents_ask_for_less(self):
         cfg=Config(); chosen={}
         full=TANK['normal']
@@ -151,6 +177,25 @@ class EngineTests(unittest.TestCase):
         for i in range(3): bus.send(2,'Manager','East','decision',{},str(i))
         self.assertEqual([m['text'] for m in bus.feed],['2','1','0'])                # newest first, capped
         with self.assertRaises(ValueError): bus.send(1,'Manager','Nowhere','decision',{},'x')
+    def test_feed_folds_repeated_messages(self):
+        bus=MessageBus()
+        for n in ('Manager','North'): bus.register(n)
+        for cycle in (1,2,3): bus.send(cycle,'Manager','North','decision',{},f'N-01 rejected ({cycle})',topic='N-01',signature='rejected')
+        self.assertEqual(len(bus.feed),1); e=bus.feed[0]
+        self.assertEqual((e['first_cycle'],e['cycle'],e['repeats'],e['text']),(1,3,3,'N-01 rejected (3)'))
+        self.assertEqual(len(bus.receive('North')),3)                     # still delivered every cycle
+        bus.send(4,'Manager','North','decision',{},'N-01 approved',topic='N-01',signature='approved')
+        bus.send(6,'Manager','North','decision',{},'N-01 approved',topic='N-01',signature='approved')   # short gap: folds
+        bus.send(20,'Manager','North','decision',{},'N-01 approved',topic='N-01',signature='approved')  # long gap: new entry
+        self.assertEqual(len(bus.feed),3); self.assertEqual(bus.feed[1]['repeats'],2)
+        f=Farm('empty')
+        for _ in range(30): f.step()
+        per_cell=Counter(m['body']['cell'] for m in f.bus.feed if m['kind']=='decision')
+        decisions=len(f.last)*30                                          # roughly what 30 unfolded cycles would show
+        self.assertLessEqual(max(per_cell.values()),3)                    # a new entry only when a cell's run is broken
+        self.assertLess(sum(per_cell.values()),decisions/10)              # instead of one per cell per cycle
+        self.assertEqual(sum(m['kind']=='tank-status' for m in f.bus.feed),1)
+        self.assertTrue(any(m['repeats']>=20 for m in f.state()['messages']))
     def test_manager_review_and_reasons(self):
         bus=MessageBus()
         for n in ('Manager','North','East'): bus.register(n)
@@ -169,9 +214,10 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(m.decide(dict(priority='normal',amount=5),0,30)['reason'],'Rejected: critical needs used all available water.')
         self.assertEqual(m.decide(dict(priority='critical',amount=5),0,0)['reason'],'Rejected: the tank is empty.')
     def test_cycle_message_flow(self):
-        f=Farm('shortage')
+        f=Farm('shortage'); sent=[]; send=f.bus.send
+        f.bus.send=lambda *a,**k: sent.append(a) or send(*a,**k)
         for cycle in (1,2):
-            f.step(); kinds=[m['kind'] for m in f.bus.feed if m['cycle']==cycle]
+            f.step(); kinds=[a[3] for a in sent if a[0]==cycle]
             self.assertEqual(kinds.count('tank-status'),1); self.assertEqual(kinds.count('zone-status'),4)
             self.assertEqual(kinds.count('recommendation'),kinds.count('decision'))
             self.assertEqual(len(f.last),kinds.count('decision'))
@@ -197,10 +243,11 @@ class EngineTests(unittest.TestCase):
             old=f.cells[4]['moisture']; f.step(); losses[t]=old-f.cells[4]['moisture']  # E-01, never irrigated here
         self.assertGreater(losses[28],losses[4])
     def test_rain_adds_moisture(self):
-        f=Farm('one-zone',env=replace(EnvironmentConfig(),rain_chance=1)); old=f.cells[4]['moisture']; f.step()
+        f=Farm('one-zone',env=replace(EnvironmentConfig(),rain_chance=1))
+        cell=next(c for c in f.cells if c['zone']=='East' and c['moisture']<99); old=cell['moisture']; f.step()
         lo,hi=f.env.rain_points
         self.assertTrue(lo<=f.conditions['rain']<=hi)
-        self.assertGreater(f.cells[4]['moisture'],old)  # E-01: no irrigation, rain outweighs drying
+        self.assertGreater(cell['moisture'],old)        # East cell: no irrigation, rain outweighs drying
         self.assertTrue(f.state()['weather']['raining'] or f.weather.rain_left==0)
     def test_rain_is_occasional(self):
         dry=Farm(env=replace(EnvironmentConfig(),rain_chance=0))
@@ -210,7 +257,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(.01<len(wet)/len(rain)<.03)   # about 1.8% of cycles expected
         self.assertTrue(all(lo<=r<=hi for r in wet))
     def test_start_moisture_is_smooth(self):
-        for scenario in ('normal','balanced','shortage'):
+        for scenario in ('normal','shortage','empty'):
             f=Farm(scenario); low,high=MOISTURE[scenario]; m={(c['row'],c['col']):c['moisture'] for c in f.cells}
             self.assertTrue(all(low-1e-9<=v<=high+1e-9 for v in m.values()))
             diffs=[abs(m[r,c]-m[r+dr,c+dc]) for r,c in m for dr,dc in ((0,1),(1,0)) if (r+dr,c+dc) in m]
@@ -234,6 +281,13 @@ class EngineTests(unittest.TestCase):
         one,two=losses(1.0),losses(2.0)
         for a,b in zip(one,two): self.assertAlmostEqual(b,2*a)
         f=Farm(); c=f.cells[0]; self.assertAlmostEqual(f.drying_rate(c),f.env.base_drying_rate*c['drying_scale'])
+    def test_available_water_scale(self):
+        cfg=Config()
+        self.assertEqual((cfg.target,cfg.trigger,cfg.critical,cfg.litres_per_point),(100,60,30,112))
+        self.assertEqual(MOISTURE['normal'],(70,100)); self.assertNotIn('balanced',SCENARIOS)
+        self.assertAlmostEqual(cfg.sensor_noise,.015/.16*100)             # calibrated TEROS 10 accuracy over loam's AW
+        f=Farm(); f.step()
+        self.assertTrue(any(f.readings[c['id']]>100 for c in f.cells))    # readings aren't clipped
     def test_normal_scenario_is_healthy(self):
         f=Farm('normal'); f.step()
         self.assertEqual(f.last,[])

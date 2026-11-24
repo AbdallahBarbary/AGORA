@@ -1,4 +1,5 @@
-"""Deterministic demonstration model; parameters are not agronomic calibration."""
+"""Farm simulation. Moisture is "percent of available water": 0 = wilting point, 100 = field capacity.
+Deterministic for a given seed. Not an agronomic recommendation."""
 from dataclasses import dataclass, asdict
 import random
 from environment import EnvironmentConfig, Weather, smooth_field, drying_scales
@@ -7,25 +8,35 @@ from messaging import MessageBus
 
 ZONES = ('North', 'East', 'West', 'South')
 EVENTS = ('heatwave', 'drought', 'water')
-SCENARIOS = ('normal', 'balanced', 'one-zone', 'shortage', 'empty')
-# Starting tank (L) per scenario: ASSUMPTIONS sized for 100 m2 cells at 112 L per moisture point.
-TANK = {'normal': 100_000, 'balanced': 100_000, 'one-zone': 50_000, 'shortage': 10_000, 'empty': 0}
-# Starting moisture range per scenario (not yet rescaled). 'one-zone' gives North its own range.
-MOISTURE = {'normal': (48, 62), 'balanced': (30, 65), 'one-zone': (60, 75), 'shortage': (12, 32), 'empty': (12, 32)}
+SCENARIOS = ('normal', 'one-zone', 'shortage', 'empty')
+# Starting tank (L) per scenario: ASSUMPTIONS sized for 100 m2 cells.
+TANK = {'normal': 100_000, 'one-zone': 50_000, 'shortage': 10_000, 'empty': 0}
+# Starting moisture range (% of available water) per scenario: ASSUMPTIONS.
+# 'one-zone': the other zones are well watered and North gets NORTH_DRY.
+MOISTURE = {'normal': (70, 100), 'one-zone': (80, 100), 'shortage': (15, 45), 'empty': (15, 45)}
+NORTH_DRY = (18, 36)
 
 @dataclass(frozen=True)
 class Config:
-    target: float = 55
-    trigger: float = 40
-    critical: float = 25
-    litres_per_point: float = 112   # REFERENCE: 100 m2 cell x 0.7 m tomato root depth x 160 mm/m available
-                                    # water for loam = 11,200 L of available water = 100 points
-    sensor_noise: float = .6
-    tick_minutes: int = 30
+    # Moisture is % of available water (AW): 0 = wilting point, 100 = field capacity.
+    target: float = 100             # ASSUMPTION: irrigation refills a cell to field capacity
+    trigger: float = 60             # REFERENCE: FAO-56 Table 22, tomato depletion fraction p = 0.40
+                                    # (water can stress the crop once 40% of AW is used up)
+    critical: float = 30            # ASSUMPTION: well past the stress line; served first in shortages
+    litres_per_point: float = 112   # REFERENCE: 100 m2 cell x 0.7 m tomato roots x 160 mm/m AW for loam
+                                    # = 11,200 L of available water = 100 points, so 1 point = 1% of AW
+    sensor_noise: float = 9.375     # ASSUMPTION: METER TEROS 10 accuracy with soil-specific calibration,
+                                    # +-0.015 m3/m3 (midpoint of METER's +-0.01-0.02 range; source: METER
+                                    # TEROS 10 tech specs, metergroup.com/products/teros-10/teros-10-tech-specs/)
+                                    # / 0.16 m3/m3 AW of loam = +-9.375 points, uniform. Worst case: METER's
+                                    # generic-calibration +-0.03 m3/m3 = +-18.75 points.
+    tick_minutes: int = 30          # ASSUMPTION: decision cycle length
 
 class SimulatedSensor:
     def read(self, cells, rng, config):
-        return {c['id']: max(0, min(100, c['moisture'] + rng.uniform(-config.sensor_noise, config.sensor_noise))) for c in cells}
+        """One noisy reading per cell. Not clipped to 0-100: real sensors can read past the
+        wilting point or field capacity, and clipping would bias the agents' averages."""
+        return {c['id']: c['moisture'] + rng.uniform(-config.sensor_noise, config.sensor_noise) for c in cells}
 
 class SimulatedIrrigation:
     def apply(self, cells, allocations, config):
@@ -52,7 +63,7 @@ class Farm:
         for row in range(8):
             for col in range(8):
                 zone=ZONES[(row//4)*2+col//4]; counts[zone]+=1
-                low,high=(15,28) if scenario=='one-zone' and zone=='North' else MOISTURE[scenario]
+                low,high=NORTH_DRY if scenario=='one-zone' and zone=='North' else MOISTURE[scenario]
                 moisture=low+field[row][col]*(high-low)
                 self.cells.append(dict(id=f'{zone[0]}-{counts[zone]:02}',zone=zone,row=row,col=col,moisture=moisture,drying_scale=scales[row][col],history=[moisture]))
         self.readings=self.sensor.read(self.cells,self.rng,self.config)
@@ -105,7 +116,7 @@ class Farm:
         return dict(tick=self.tick,scenario=self.scenario,tank=self.tank,used=self.used,added=self.added,manual=self.manual,events=self.events,
             config=asdict(self.config),agent_config=asdict(self.agent_config),
             cells=[dict(c,reading=self.readings[c['id']],plan=self.assessments.get(c['id'])) for c in self.cells],
-            messages=[{k:m[k] for k in ('id','cycle','sender','recipient','kind','text')} for m in self.bus.feed[:150]],
+            messages=[{k:m[k] for k in ('id','first_cycle','cycle','repeats','sender','recipient','kind','text')} for m in self.bus.feed[:150]],
             environment=asdict(self.env),weather=self.weather.now(self.tick),last_conditions=self.conditions,
             requests=self.last,logs=self.logs,assessment=self.assessment,zones=[dict(name=z,
                 stressed=bool(self.assessment) and z in self.assessment['stressed'],

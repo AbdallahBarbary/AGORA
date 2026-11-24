@@ -1,4 +1,5 @@
 """Simulated environment: weather that acts on the farm, independent of the agents.
+Moisture amounts are in points of available water (1 point = 1% of AW = 112 L per cell).
 
 Each number in EnvironmentConfig is labelled with where it comes from:
   FITTED      estimated from real data (source named on the line; data described in data/README.md)
@@ -17,7 +18,7 @@ class EnvironmentConfig:
     temp_amplitude: float = 5.6      # °C, half the day/night swing (17.0–28.2 °C)
     peak_hour: float = 15.7          # hottest time of day, local standard time
     # --- Drying ---
-    base_drying_rate: float = .09    # REFERENCE: points per cycle at mean_temp, farm average. FAO-56 tomato
+    base_drying_rate: float = .09    # REFERENCE: % of AW lost per cycle at mean_temp, farm average. FAO-56 tomato
                                      # water use ~5 mm/day / 112 mm total available water; consistent with USCRN dry-down
     drying_spread: float = .2        # ASSUMPTION: cell scales span about 1 ± this (0.8–1.2)
     drying_per_degree: float = .02   # FITTED: +2% drying per °C above mean_temp, -2% below. USCRN Tucson
@@ -26,7 +27,7 @@ class EnvironmentConfig:
     # --- Rain: FITTED, NOAA USCRN hourly precipitation, Tucson 11 W, 2024-2025 ---
     rain_chance: float = .0037       # chance a shower starts in a dry 30-minute cycle (~1 every 5.6 days)
     rain_ticks: tuple = (2, 8)       # shower length in cycles (1–4 hours)
-    rain_points: tuple = (.45, .71)  # moisture points added to every cell per rainy cycle
+    rain_points: tuple = (.45, .71)  # % of AW added to every cell per rainy cycle
     rain_drying_factor: float = .3   # ASSUMPTION: evaporation multiplier while it rains (cloudy, humid air)
     # --- Starting moisture ---
     smoothing_passes: int = 3        # ASSUMPTION: more passes = larger patches of similar moisture
