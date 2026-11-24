@@ -2,7 +2,13 @@
 
 Raw downloads used to calibrate the simulation. The files themselves are git-ignored (about 4 MB);
 this note records where they came from so they can be fetched again. Downloaded 2026-11-24.
-Nothing in the simulation has been fitted to them yet.
+
+- `uscrn/` is used: `python calibrate.py` (in the project root) reads the two Tucson files and
+  re-derives every FITTED weather number in `environment.py` (temperature cycle, heat effect on
+  drying, shower chance, length and intensity), then compares them with the code. A unit test runs
+  the same check when these files are present. To recreate the folder, download the four files
+  below from the source URL into `data/uscrn/`.
+- `mendeley/` is not used by the code yet.
 
 ## `uscrn/`: NOAA NCEI U.S. Climate Reference Network, hourly02
 

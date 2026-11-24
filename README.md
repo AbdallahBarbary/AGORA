@@ -1,6 +1,6 @@
-# AGORA — first milestone
+# AGORA
 
-A local Python prototype of Manager-led irrigation across an 8 × 8 simulated farm. The custom dashboard follows the supplied video's charcoal panels, status colors, filters, and side inspector.
+A local Python prototype of agent-led irrigation on an 8 × 8 simulated tomato farm. Four zone agents forecast their cells' soil moisture and recommend irrigation; a Manager agent decides how the shared tank is spent; they talk through a message bus you can watch on the dashboard. The weather is fitted to NOAA data from Tucson, Arizona, and the water amounts follow FAO-56. The custom dashboard follows the supplied video's charcoal panels, status colors, filters, and side inspector.
 
 ## Run
 
@@ -13,7 +13,7 @@ python server.py
 
 Open http://127.0.0.1:8765 in your browser. Keep the terminal running. Stop it with Ctrl+C.
 
-Run checks with `python -m unittest -v` from this directory. Re-derive the FITTED numbers from the downloaded data with `python calibrate.py`.
+Run checks with `python -m unittest -v` from this directory. Re-derive the FITTED numbers from the downloaded data with `python calibrate.py`. The data files are git-ignored; `data/README.md` says where to download them. Without them the app and tests still run, and only the calibration check is skipped.
 
 ## Moisture scale
 
@@ -21,9 +21,9 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 
 ## Demonstration
 
-1. Select **Normal (healthy farm)** (70–100%) and start the simulation. Nobody needs water for the first days; cells dry a little faster in the afternoon heat and the odd shower tops them up. After about three days cells start crossing 60% and get refilled.
-2. Select **One zone needs water**. Advance one cycle. The North agent recommends water for its critical cells; the other zones recommend waiting. North needs more water to reach field capacity than the 50,000 L tank holds, so its recommendations are adjusted. Watch the exchange in **Agent messages**.
-3. Select **Critical shortage**. Advance a cycle. Because the Manager announces scarce water, zone agents recommend only part of each gap. Critical recommendations are adjusted proportionally; normal ones are rejected. The Manager report shows **water short**, the zones prioritised for critical cells, and the zones whose normal requests were reduced or delayed.
+1. Select **Normal (healthy farm)** (70–100%) and start the simulation. Cells dry about 4% a day on average (3.5–5% depending on the cell), a little faster in the afternoon heat, and the odd shower tops them up. The first refills come around day 2 (sensor noise lets a few cells at 60–65% through slightly early), more from day 3 as cells cross 60%. The 100,000 L tank lasts until about day 9.
+2. Select **One zone needs water**. Advance one cycle. The North agent recommends a full refill for its critical cells; the other zones recommend waiting. North needs more water to reach field capacity than the 50,000 L tank holds, so its recommendations are adjusted and the tank is used up in that first cycle. Watch the exchange in **Agent messages**.
+3. Select **Critical shortage**. Advance a cycle. Because the Manager announces scarce water, zone agents recommend only part of each gap. In the first cycle only critical cells act, since the rest are still collecting readings. The 10,000 L covers about 9% of what they ask for and runs out at once, so every later recommendation is rejected. The Manager report shows **water short**, the zones prioritised for critical cells, and the zones whose normal requests were reduced or delayed.
 4. Select **Empty tank**. Advance a cycle, add 5,000 L, then advance again. Irrigation resumes.
 5. Select any cell to inspect its history, its 1-hour forecast, the scores of each option, and the Manager's decision. Filter the log by zone or priority and export it (with the message feed) as JSON.
 6. While it runs, trigger **Heatwave** (+10 °C for 2 days) or **Drought** (no rain and drier air for 3 days) from the Events bar. In the cell inspector, **Water cell** hand-waters the selected cell (+1,000 L, outside the shared tank).
@@ -44,6 +44,8 @@ The dashboard shows the message feed and, in the decision log, each zone's recom
 `environment.py` holds the environment the agents live in: `EnvironmentConfig` (all weather and event numbers), `Weather` (daily temperature cycle, random rain, heatwave and drought), and `smooth_field` (starting moisture where neighbouring cells are similar), and `drying_scales` (per-cell drying multipliers in similar patches). Each cycle, irrigation is applied first, then rain adds moisture and evaporation removes `base drying rate × cell drying scale × weather drying factor`. The drying factor grows with temperature, drops while it rains, and rises during a drought. Weather uses its own random stream, so it never shifts the sensor noise.
 
 `server.py` exposes the state and step/reset/refill/event actions on a local HTTP server. `web/` provides the custom browser interface. State lives in memory and is shared between browser tabs. Restarting the server resets it. The simulation advances only while the browser runs it or the user requests a step.
+
+`calibrate.py` re-derives the FITTED weather numbers from the NOAA data in `data/uscrn/` and compares them with the code. `test_engine.py` holds the unit tests. `data/` holds the downloaded calibration data (git-ignored, apart from its README).
 
 ## Numbers and sources
 
@@ -94,7 +96,7 @@ Every tunable number in the project, taken from the code (`engine.py` `Config`, 
 ### Known limitations
 
 - **Available water is a stand-in.** 160 mm/m for loam comes from UMN Extension and is used in place of a value from FAO-56 Table 19, which still needs verifying for this soil. Total available water per cell, litres per point, and every litre amount in the project scale with it.
-- **The heat effect comes from day-to-day data, not hourly.** USCRN's hourly soil moisture at Tucson was too noisy to show a usable hourly dry-down, so the heat effect comes from day-to-day losses on rain-free days. It's noisy (0.4–2.8%, depending on which days are used up to 3.2%), and it can't show how drying changes within a day.
+- **The heat effect comes from day-to-day data, not hourly.** USCRN's hourly soil moisture at Tucson was too noisy to show a usable hourly dry-down, so the heat effect comes from day-to-day losses on rain-free days. It's noisy: the main estimate is 1.6% with a 90% range of 0.4–2.8%, and other choices of days give up to 3.2%. It also can't show how drying changes within a day.
 - **The sensor noise is optimistic.** ±9.375 points assumes a soil-specific calibration that reaches the middle of METER's ±0.01–0.02 m³/m³ claim. METER's generic figure (±0.03 m³/m³ = ±18.75 points) is the worst case, and independent tests found errors near ±0.03 m³/m³ even after calibration. Noise is also modelled as uniform and independent per reading, with no fixed per-sensor bias.
 - **Rain uses even ranges, not the real distribution.** Showers and their intensity are drawn evenly from ranges that keep the data's averages and annual total. Real Tucson rain is lumpier: most showers last an hour, and a few heavy storms bring much of the year's rain.
 - **The USCRN station only measures soil moisture at 5 and 10 cm**, shallower than the 0.7 m root zone, and 2024 has nightly gaps from 1 January to 20 February.
@@ -105,5 +107,5 @@ Each cell dries at the base rate times its own drying scale. The scales sit arou
 
 The farm map shows internal simulator state. Agents receive noisy sensor values (not clipped, so they can read past 0 or 100) and act on their smoothed estimate; the inspector shows the raw reading, the estimate and the forecast separately. History retains 60 points; the decision log and export retain the latest 500 per-cell decisions. Zone totals describe the latest cycle, while tank usage is cumulative.
 
-This milestone uses explicit rules, not a trained prediction model or an LLM. It does not include temperature control, seeding, soil water movement between cells, negotiation between zones, joint assessment, persistence, or real hardware. Hardware adapters can later implement the sensor and actuator boundaries, with additional feedback and failure handling required before physical use.
+The agents use explicit rules, not a trained prediction model or an LLM; the forecaster sits behind an interface so a trained model can replace it later. It does not include temperature control, seeding, soil water movement between cells, negotiation between zones, joint assessment, persistence, or real hardware. Hardware adapters can later implement the sensor and actuator boundaries, with additional feedback and failure handling required before physical use.
 
