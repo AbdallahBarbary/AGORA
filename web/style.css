@@ -8,7 +8,7 @@
   --water:#2867B2;--water-text:#7FB0E8;
   --ok-bg:#1E2A1C;--ok:#B9D6AE;--need-bg:#2E2616;--need:#E5C98C;--crit-bg:#33201A;--crit:#EDB4A0;
   --short-bg:#2A2316;--short-line:#4D3F22;
-  --heat-band:#3A2A1D;--drought-band:#2E2A20;--heat-icon:#B8612E;--drought-icon:#B89155;
+  --heat-band:#3A2A1D;--drought-band:#2E2A20;--pump-band:#232A33;--heat-icon:#B8612E;--drought-icon:#B89155;--pump-icon:#8D99A5;
   --line-trigger:#6E685C;--line-critical:#C8664A;
   --z-north:#199e70;--z-east:#d95926;--z-west:#9085e9;--z-south:#c98500;
 }

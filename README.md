@@ -23,10 +23,10 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 
 **Farm** (the main view), top to bottom:
 
-- **Controls.** Play/Pause, Step one cycle, Skip one day and a Speed switch, with the simulated clock, air temperature and Reset. Below: the scenario and the near-line option, then the three events (Heatwave, Drought, Add water), each with a one-line explanation and the events still running.
+- **Controls.** Play/Pause, Step one cycle, Skip one day and a Speed switch, with the simulated clock, air temperature and Reset. Below: the scenario, then the four events (Heatwave, Drought, Top up tank, Pump failure), each with a one-line explanation, and the events still running.
 - **The field.** The 64 plots in their four zones, seen from above. Colour is soil moisture: brown below the critical line (30%), straw below the irrigation line (60%), green above; the numbers are each plot's real moisture. Blue pipes run from the shared tank at the centre (its dial shows how full it is; the pipes turn grey when it's empty). A blue badge marks plots watered this cycle; each zone shows its average, how many plots need water, a *Stressed* tag and *Receiving water* when it applies.
 - **What the Manager is doing.** The farm assessment (normal, local or farm-wide), what was asked for and what was approved, reduced or rejected and why, and a *Water is short* box when the tank can't cover everything.
-- **Water tank.** Litres left against a full tank (100,000 L), how many days of average use that covers, and what has been used and added. An empty tank shows a button to add water.
+- **Water tank.** Litres left against the tank's capacity (30,000 L), how many days of average use that covers, the supply coming in (or that the pump has failed), and what has been used, supplied, topped up and overflowed. An empty tank shows a button to top it up.
 - **Selected plot.** Click a plot: its real moisture, sensor reading, the agent's estimate and forecast, its recent history, and in plain sentences what its zone agent asked for and what the Manager decided. You can water it by hand from here.
 - **Moisture over time.** Each zone's average over the last 7 days, with the 60% and 30% lines, heatwaves and droughts as shaded bands and water added as markers. Hover (or focus it and use the arrow keys) to read every zone at one moment.
 
@@ -36,23 +36,25 @@ Thresholds, sizes, names and amounts on screen come from the server's settings. 
 
 ## Demonstration
 
+**Water supply.** The farm gets a steady inflow into its tank of **31,000 L a day**, its daily water quota: about what it uses on an average day (64 plots × 0.09% of available water per cycle × 48 cycles × 112 L = 30,966 L). The tank holds **30,000 L**, about a day's quota, as a buffer for bursts of refills; inflow beyond that overflows. On a normal day supply and use balance. A heatwave raises use by about a fifth, above the quota, and a hot, dry spell by much more.
+
+**Scenarios** (dropdown; selecting one resets the run with seed 42). Every scenario starts with a few plots just under the 60% line, so the agents act within the first second at normal speed.
+
+| Name | Supply | Tank at start | Starting moisture | What happens over 10 days |
+|---|---|---|---|---|
+| Healthy farm | 31,000 L/day | full (30,000 L) | 55–100% | Supply matches need. 0–10 plots a day ask for water and every request is approved; the tank swings between about 2,600 L and full. No plot ever goes critical. |
+| One zone dries out | 46,500 L/day (1.5×) | full | North 18–36%, the rest 55–100% | A local problem: North's 16 parched plots ask for far more than the tank holds, so for about a day the Manager serves North's critical plots first and shares the inflow between them (all 17 critical requests served; 14 other requests wait). North recovers by day 2; after that every request is approved. |
+| Heatwave week | 31,000 L/day | full | 55–100% | Hot and dry from day 2 to day 5 (+10 °C and no rain), so the soil loses about 55,700 L a day against 31,000 L of supply. The tank drains, and on days 5–6 the Manager cuts back 10 requests. The heat breaks after day 5 and by days 7–9 every request is approved again. No plot goes critical. |
+| Water shortage | 15,500 L/day (half) | a quarter | 50–90% | The Manager rations every day: requests are cut back in proportion (up to 30 reductions a day by day 10) while the average moisture slides from about 71% to about 61% and the zones become stressed. No plot goes critical and nothing collapses within 10 days. |
+
+**Events** (in the controls, any time): **Heatwave** (+10 °C for 2 days), **Drought** (no rain, drying ×1.5 for 3 days), **Pump failure** (no supply into the tank for 1 day) and **Top up tank** (adds 5,000 L, up to the tank's capacity). In the selected-plot panel, **Water by hand** adds 1,000 L to one plot without using the tank.
+
 **Guided demo.** Press **Start guided demo** (top right). It walks through four steps, each with a caption explaining what to notice. The numbers in the captions are read from the run as it happens:
 
-1. **A healthy farm.** Every zone starts well watered except one patch just under the 60% line. Within a few cycles its zone agent recommends water, and the Manager approves.
-2. **A heatwave.** +10 °C for two days (shaded on the chart) and soil dries about a fifth faster. Two figures sit side by side: **evaporation from the soil** (about 37,000 L that day) and **irrigation from the tank** (about 28,000 L). The tank only refills cells that cross 60%, so the rest is drawn from water already stored in the soil.
-3. **A water shortage.** The demo skips ahead until the tank is empty, plus one more day. Plots drift below 60%, zones become stressed, the Manager rejects every request because the tank is empty, and the pipes in the field turn grey.
-4. **Recovery.** 50,000 L is added. The waiting recommendations are approved, and within six hours every dry cell is back to field capacity, using most of the new water. On an average day the soil loses about 31,000 L to evaporation (more in a heatwave), and over time the tank has to replace all of it.
-
-**Scenarios** (dropdown; selecting one resets the run with seed 42):
-
-| Name | Tank | Starting moisture |
-|---|---|---|
-| Healthy farm | 100,000 L | 70–100% |
-| One dry zone, small tank | 50,000 L | North 18–36%, the rest 80–100% |
-| Dry farm, little water | 10,000 L | 15–45% |
-| Dry farm, empty tank | 0 L | 15–45% |
-
-**Start some cells near the irrigation line** (under the scenario) is off by default. Tick it to start the well-watered ranges at 55% instead (5 points under the line); a few cells then need water within the first cycles, so agents act within seconds. The dry ranges don't change. The box applies whenever you pick a scenario or press Reset. The guided demo always starts near the line on its own and leaves the box as you set it, so a plain **Healthy farm** run afterwards uses the usual ranges. A **Started near the line** tag on the farm map shows when the current run began that way.
+1. **A healthy farm.** The supply matches the farm's use. A few plots start just under the line, their agents ask within minutes and the Manager approves every request, while the tank dips and refills.
+2. **One zone dries out.** North starts parched: a local problem. The Manager serves North's critical plots first and shares the water between them while the other zones wait their turn; two figures compare what North asked for with what it got.
+3. **A heatwave causes a shortage.** The Heatwave week scenario runs until the Manager first has to cut back requests (day 5), showing the day's evaporation next to the supply.
+4. **Recovery.** The run continues to two days after the heat breaks: demand falls back to about the supply, the tank recovers and requests are approved again.
 
 **Playback.** Each cycle is 30 simulated minutes, whatever the speed:
 
@@ -61,18 +63,10 @@ Thresholds, sizes, names and amounts on screen come from the server's settings. 
 | Slow | 1 cycle a second (a day in 48 s) |
 | Normal | 4 cycles a second (a day in 12 s) |
 | Fast | a day in 4 s |
-| Fastest | a day in 2 s |
 
 **Step one cycle** advances exactly one cycle and **Skip one day** advances 48; both pause playback. Speed only changes how fast you see it: results are the same at every speed and repeat exactly with the seed.
 
-**Other things to try:**
-
-- **Healthy farm** (usual start): cells dry about 4% a day on average (3.5–5% depending on the cell), a little faster in the afternoon heat, and the odd shower tops them up. The first refills come around day 2 (sensor noise lets a few cells at 60–65% through slightly early), more from day 3. The tank lasts until about day 9.
-- **One dry zone, small tank:** advance one cycle. The North agent recommends a full refill for its critical cells while the other zones wait. North needs more water than the 50,000 L tank holds, so its recommendations are adjusted and the tank is used up in that first cycle. Watch the exchange in **Agent messages**.
-- **Dry farm, little water:** because the Manager announces scarce water, zone agents recommend only part of each gap. In the first cycle only critical cells act, since the rest are still collecting readings. The 10,000 L covers about 9% of what they ask for and runs out at once. The Manager report shows **water short** and which zones were prioritised, reduced or delayed.
-- **Dry farm, empty tank:** advance a cycle, press **+ Add 5,000 L**, then advance again. Irrigation resumes.
-- Select any cell to inspect its history, its 1-hour forecast, the scores of each option, and the Manager's decision. Filter the log by zone or priority and export it (with the message feed) as JSON.
-- While it runs, trigger **Heatwave** (+10 °C for 2 days) or **Drought** (no rain and drier air for 3 days) from the controls. In the selected-plot panel, **Water by hand** waters the selected cell (+1,000 L, outside the shared tank).
+Click any plot to read, in plain sentences, what its zone agent asked for and what the Manager decided. **Details** shows the message feed and the decision table; filter it by zone or priority and export it as CSV.
 
 ## How it works
 
@@ -116,20 +110,20 @@ Every tunable number in the project, taken from the code (`engine.py` `Config`, 
 | Evaporation while raining | ×0.3 | ASSUMPTION | Cloudy, humid air | `rain_drying_factor` |
 | Cell drying spread | each cell × 0.8–1.2 (1 ± 0.2), smoothed in patches, farm average exactly 1 | ASSUMPTION | | `drying_spread`, `smoothing_passes` = 3 |
 | Sensor noise | ±9.375 points, uniform | ASSUMPTION | METER TEROS 10 tech specs: ±0.015 m³/m³, the midpoint of the ±0.01–0.02 soil-specific-calibration accuracy, ÷ 0.16 m³/m³. Worst case: generic calibration ±0.03 m³/m³ = ±18.75 points | `Config.sensor_noise` |
-| Tank sizes | Normal 100,000 L, One zone 50,000 L, Critical shortage 10,000 L, Empty 0 | ASSUMPTION | Sized for 100 m² cells | `TANK` |
-| Starting moisture | Normal 70–100%, One zone 80–100% (North 18–36%), Critical shortage and Empty 15–45% | ASSUMPTION | | `MOISTURE`, `NORTH_DRY` |
-| Refill / hand-watering | 5,000 L / 1,000 L | ASSUMPTION | Dashboard events | `refill_litres`, `manual_water_litres` |
-| Heatwave / drought | +10 °C for 2 days / no rain and drying ×1.5 for 3 days | ASSUMPTION | Dashboard events | `heatwave_*`, `drought_*` |
+| Water supply | 31,000 L a day, steady, into the tank | ASSUMPTION (the farm's daily water quota) | About the farm's average daily water use: 64 plots × 0.09% × 48 cycles × 112 L = 30,966 L | `Config.supply_litres_per_day` |
+| Tank capacity | 30,000 L | ASSUMPTION | About one day's quota, a buffer for bursts of refills; inflow beyond it overflows | `Config.tank_capacity_litres` |
+| Scenarios | supply ×1 / ×1.5 / ×1 / ×0.5; tank full / full / full / a quarter; moisture 55–100% (One zone: North 18–36%; Water shortage 50–90%); Heatwave week: heatwave and drought on days 2–5 | ASSUMPTION (scenario settings) | | `engine.SCENARIO` |
+| Top-up / hand-watering | 5,000 L into the tank (up to capacity) / 1,000 L onto one plot | ASSUMPTION | Dashboard events | `refill_litres`, `manual_water_litres` |
+| Heatwave / drought / pump failure | +10 °C for 2 days / no rain and drying ×1.5 for 3 days / no supply for 1 day | ASSUMPTION | Dashboard events | `heatwave_*`, `drought_*`, `pump_failure_ticks` |
 | Decision cycle | 30 minutes | ASSUMPTION | | `Config.tick_minutes` |
 | "Stressed" zone | more than a quarter of its cells (> 4 of 16) estimated below the trigger | ASSUMPTION (project design) | | `AgentConfig.stressed_share` |
 | "Farm-wide" problem | 3 or more stressed zones (1–2 = local) | ASSUMPTION (project design) | | `AgentConfig.farm_wide_zones` |
 | Urgency below critical | points below 30% count double | ASSUMPTION (project design) | | `AgentConfig.critical_stress_weight` |
 | Utility weights | benefit 0.5, urgency 0.3, cost 0.2 | ASSUMPTION | The project deck | `AgentConfig` |
-| Water price | ×1 at 100,000 L or more, rising to ×3 when empty | ASSUMPTION | A full Normal tank counts as plentiful | `comfortable_tank`, `scarcity_price` |
+| Water price | ×1 when the tank is full (30,000 L), rising to ×3 when empty | ASSUMPTION | A full tank counts as plentiful | `comfortable_tank`, `scarcity_price` |
 | Forecasting | 1 h ahead; 96-reading (2-day) window; trend from 48 readings; act from 4 readings unless critical; part of the gap = ½ | ASSUMPTION | | `AgentConfig` |
 | Feed folding | an unchanged repeat within 6 cycles (3 h) folds into one entry | ASSUMPTION | | `MessageBus.fold_cycles` |
-| Near-line start | well-watered ranges start 5 points under the trigger (55%) | ASSUMPTION (demo setting) | | `engine.NEAR_LINE_MARGIN` |
-| Guided demo | starts near the line; a heatwave day; until the tank is empty + 1 day; then +50,000 L | ASSUMPTION (demo setting) | | `web/app.js` `DEMO` |
+| Guided demo | Healthy farm 12 h; One zone dries out 6 h; Heatwave week until the first cut-back; then 2 days after the heat breaks | ASSUMPTION (demo setting) | | `web/app.js` `DEMO` |
 
 ### Numbers still without a label or a precise source
 
@@ -145,6 +139,7 @@ Every tunable number in the project, taken from the code (`engine.py` `Config`, 
 - **The heat effect comes from day-to-day data, not hourly.** USCRN's hourly soil moisture at Tucson was too noisy to show a usable hourly dry-down, so the heat effect comes from day-to-day losses on rain-free days. It's noisy: the main estimate is 1.6% with a 90% range of 0.4–2.8%, and other choices of days give up to 3.2%. It also can't show how drying changes within a day.
 - **The sensor noise is optimistic.** ±9.375 points assumes a soil-specific calibration that reaches the middle of METER's ±0.01–0.02 m³/m³ claim. METER's generic figure (±0.03 m³/m³ = ±18.75 points) is the worst case, and independent tests found errors near ±0.03 m³/m³ even after calibration. Noise is also modelled as uniform and independent per reading, with no fixed per-sensor bias.
 - **Rain uses even ranges, not the real distribution.** Showers and their intensity are drawn evenly from ranges that keep the data's averages and annual total. Real Tucson rain is lumpier: most showers last an hour, and a few heavy storms bring much of the year's rain.
+- **The water supply is a modelling choice.** A steady 31,000 L a day into a 30,000 L tank stands in for a real allocation: it doesn't vary by season, time of day or a water authority's schedule, and the tank has no losses.
 - **The USCRN station only measures soil moisture at 5 and 10 cm**, shallower than the 0.7 m root zone, and 2024 has nightly gaps from 1 January to 20 February.
 
 ### Model notes

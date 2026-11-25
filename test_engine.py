@@ -4,7 +4,7 @@ from dataclasses import replace
 from environment import EnvironmentConfig, Weather, drying_scales
 import random
 from collections import Counter
-from engine import Farm, MOISTURE, SCENARIOS, TANK, Config, SCENARIO_NAMES, NEAR_LINE_MARGIN, MAX_ADVANCE, ZONES, ZONE_HISTORY
+from engine import Farm, MOISTURE, SCENARIOS, SCENARIO, Config, SCENARIO_NAMES, MAX_ADVANCE, ZONES, ZONE_HISTORY
 from agents import AgentConfig
 from agents import ManagerAgent, ZoneAgent, MANAGER
 from forecast import TrendForecaster
@@ -22,14 +22,14 @@ class EngineTests(unittest.TestCase):
         f=Farm('one-zone'); f.step()
         self.assertEqual({r['zone'] for r in f.last},{'North'})                  # only the dry zone asks
         self.assertTrue(all(r['priority']=='critical' for r in f.last))         # cycle 1: only critical cells act
-        self.assertAlmostEqual(f.used,min(TANK['one-zone'],sum(r['amount'] for r in f.last)))   # never over the tank
+        self.assertAlmostEqual(f.used,min(f.capacity,sum(r['amount'] for r in f.last)))   # never over the (full) tank
     def test_shortage_priority_and_proportion(self):
         rs=[dict(cell='a',priority='critical',amount=30),dict(cell='b',priority='critical',amount=60),dict(cell='c',priority='normal',amount=20)]
         a=ManagerAgent().allocate(rs,45)
         self.assertEqual(a,{'a':15,'b':30,'c':0})
         self.assertEqual(ManagerAgent().allocate(rs,100),{'a':30,'b':60,'c':10})
-    def test_empty_and_refill(self):
-        f=Farm('empty'); f.step(); self.assertEqual(f.used,0)
+    def test_empty_tank_and_top_up(self):
+        f=Farm('one-zone'); f.tank=0; f.trigger('pump'); f.step(); self.assertEqual(f.used,0)   # no water, no supply
         f.refill(); f.step(); self.assertGreater(f.used,0)
     def test_accounting_and_bounds_over_time(self):
         for scenario in SCENARIOS:
@@ -38,8 +38,9 @@ class EngineTests(unittest.TestCase):
                 if tick%10==0: f.refill()
                 before=f.tank; old={c['id']:c['moisture'] for c in f.cells}; f.step()
                 used=sum(r['allocated'] for r in f.last)
-                self.assertLessEqual(used,before+1e-8)
-                self.assertAlmostEqual(f.initial_water+f.added,f.tank+f.used)
+                self.assertLessEqual(used,before+f.supply_per_cycle+1e-8)   # the cycle's supply arrives before the Manager plans
+                self.assertAlmostEqual(f.initial_water+f.added+f.supplied,f.tank+f.used)   # water in = water held + water used
+                self.assertLessEqual(f.tank,f.capacity+1e-6)
                 for r in f.last:
                     self.assertGreaterEqual(r['allocated'],0)
                     self.assertLessEqual(r['allocated'],r['amount']+1e-8)
@@ -56,8 +57,10 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(a['message'],'Local problem: North.')
         self.assertEqual([z['name'] for z in f.state()['zones'] if z['stressed']],['North'])
     def test_assessment_farm_wide_all_dry(self):
-        for scenario in ('shortage','empty'):
-            f=Farm(scenario); f.step()
+        for scenario in ('shortage','healthy'):
+            f=Farm(scenario)
+            for c in f.cells: c['moisture']=20            # a parched farm
+            f.step()
             self.assertEqual(f.assessment['level'],'farm-wide')
             self.assertEqual(f.assessment['stressed'],['North','East','West','South'])
             self.assertEqual(f.assessment['message'],'Farm-wide: all 4 zones stressed.')
@@ -88,13 +91,13 @@ class EngineTests(unittest.TestCase):
         self.assertIsNone(explain(130))  # exactly enough: no shortage
         self.assertIsNone(m.explain_shortage([],{},0))
     def test_shortage_in_farm_report(self):
-        f=Farm('shortage'); f.step(); x=f.assessment['shortage']
+        f=Farm('one-zone'); f.step(); x=f.assessment['shortage']          # North's parched plots ask for more than the tank
         crit={r['zone'] for r in f.last if r['priority']=='critical'}
         waiting={r['zone'] for r in f.last if r['priority']=='normal' and r['status']=='rejected'}
         self.assertEqual(set(x['prioritised']),crit); self.assertEqual(set(x['delayed']),waiting)
-        self.assertAlmostEqual(x['available'],TANK['shortage']); self.assertAlmostEqual(f.used,TANK['shortage'])  # whole tank, never more
+        self.assertAlmostEqual(x['available'],f.capacity); self.assertAlmostEqual(f.used,f.capacity)  # whole tank, never more
         self.assertTrue(x['message'].startswith('Water short:'))
-        f=Farm('normal'); f.step(); self.assertIsNone(f.state()['assessment']['shortage'])
+        f=Farm('healthy'); f.step(); self.assertIsNone(f.state()['assessment']['shortage'])
     def test_shortage_reported_exactly_when_requests_cut(self):
         for scenario in SCENARIOS:
             f=Farm(scenario)
@@ -143,7 +146,7 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(a['option'],'wait'); self.assertIn('readings so far',a['rationale'])
         self.assertNotEqual(z.assess_cell('N-01',45,cfg)['option'],'wait')
         self.assertNotEqual(ZoneAgent('North').assess_cell('N-02',10,cfg)['option'],'wait')   # critical: act at once
-        f=Farm('normal')
+        f=Farm('healthy')
         for _ in range(need-1): f.step(); self.assertEqual(f.last,[])
     def test_utility_balances_benefit_urgency_and_cost(self):
         cfg=Config(); z=ZoneAgent('North'); u=lambda f,points:z.utility(f,points*cfg.litres_per_point,cfg)
@@ -157,7 +160,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual((z.stress(60,cfg),z.stress(0,cfg)),(0,1))
     def test_scarcity_makes_agents_ask_for_less(self):
         cfg=Config(); chosen={}
-        full=TANK['normal']
+        full=Config().tank_capacity_litres
         for tank in (full,0):
             bus=MessageBus()
             for n in (MANAGER,'North'): bus.register(n)
@@ -189,7 +192,7 @@ class EngineTests(unittest.TestCase):
         bus.send(6,'Manager','North','decision',{},'N-01 approved',topic='N-01',signature='approved')   # short gap: folds
         bus.send(20,'Manager','North','decision',{},'N-01 approved',topic='N-01',signature='approved')  # long gap: new entry
         self.assertEqual(len(bus.feed),3); self.assertEqual(bus.feed[1]['repeats'],2)
-        f=Farm('empty')
+        f=Farm('shortage'); f.tank=0; f.trigger('pump')               # an empty tank that stays empty
         for _ in range(30): f.step()
         per_cell=Counter(m['body']['cell'] for m in f.bus.feed if m['kind']=='decision')
         decisions=len(f.last)*30                                          # roughly what 30 unfolded cycles would show
@@ -215,7 +218,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(m.decide(dict(priority='normal',amount=5),0,30)['reason'],'Rejected: critical needs used all available water.')
         self.assertEqual(m.decide(dict(priority='critical',amount=5),0,0)['reason'],'Rejected: the tank is empty.')
     def test_cycle_message_flow(self):
-        f=Farm('shortage'); sent=[]; send=f.bus.send
+        f=Farm('one-zone'); sent=[]; send=f.bus.send
         f.bus.send=lambda *a,**k: sent.append(a) or send(*a,**k)
         for cycle in (1,2):
             f.step(); kinds=[a[3] for a in sent if a[0]==cycle]
@@ -258,7 +261,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(.01<len(wet)/len(rain)<.03)   # about 1.8% of cycles expected
         self.assertTrue(all(lo<=r<=hi for r in wet))
     def test_start_moisture_is_smooth(self):
-        for scenario in ('normal','shortage','empty'):
+        for scenario in ('healthy','heatwave','shortage'):
             f=Farm(scenario); low,high=MOISTURE[scenario]; m={(c['row'],c['col']):c['moisture'] for c in f.cells}
             self.assertTrue(all(low-1e-9<=v<=high+1e-9 for v in m.values()))
             diffs=[abs(m[r,c]-m[r+dr,c+dc]) for r,c in m for dr,dc in ((0,1),(1,0)) if (r+dr,c+dc) in m]
@@ -285,7 +288,7 @@ class EngineTests(unittest.TestCase):
     def test_available_water_scale(self):
         cfg=Config()
         self.assertEqual((cfg.target,cfg.trigger,cfg.critical,cfg.litres_per_point),(100,60,30,112))
-        self.assertEqual(MOISTURE['normal'],(70,100)); self.assertNotIn('balanced',SCENARIOS)
+        self.assertEqual(MOISTURE['healthy'],(55,100)); self.assertNotIn('empty',SCENARIOS)
         self.assertAlmostEqual(cfg.sensor_noise,.015/.16*100)             # calibrated TEROS 10 accuracy over loam's AW
         f=Farm(); f.step()
         self.assertTrue(any(f.readings[c['id']]>100 for c in f.cells))    # readings aren't clipped
@@ -309,38 +312,64 @@ class EngineTests(unittest.TestCase):
         flat=ZoneAgent('North',replace(AgentConfig(),critical_stress_weight=1))
         self.assertAlmostEqual((flat.stress(10,cfg)-flat.stress(20,cfg))/(flat.stress(40,cfg)-flat.stress(50,cfg)),1)
     # --- Demo speed-ups: near-line start, multi-cycle advance, plain names ---
-    def test_near_line_start(self):
-        cfg=Config(); usual,near=Farm('normal'),Farm('normal',near_line=True)
-        lows=[c['moisture'] for c in near.cells]
-        self.assertAlmostEqual(min(lows),cfg.trigger-NEAR_LINE_MARGIN); self.assertAlmostEqual(max(lows),MOISTURE['normal'][1])
-        rank=lambda f:sorted(range(64),key=lambda i:f.cells[i]['moisture'])
-        self.assertEqual(rank(usual),rank(near))                                # same pattern, just shifted down
-        for scenario in ('shortage','empty'):                                   # already-dry ranges don't change
-            self.assertEqual([c['moisture'] for c in Farm(scenario).cells],[c['moisture'] for c in Farm(scenario,near_line=True).cells])
-        self.assertEqual(Farm('normal',near_line=True).advance(20),Farm('normal',near_line=True).advance(20))   # repeatable
-    def test_agents_act_early_with_near_line_start(self):
-        def first_recommendation(farm):
-            for cycle in range(1,49):
-                farm.step()
-                if farm.last: return cycle
-        self.assertLessEqual(first_recommendation(Farm('normal',near_line=True)),8)   # within 2 s at normal speed
-        self.assertIsNone(first_recommendation(Farm('normal')))                      # the usual start waits longer
     def test_advance_matches_single_steps(self):
         a,b=Farm(),Farm()
         for _ in range(48): a.step()
         self.assertEqual(a.state(),b.advance(48))
         for bad in (0,MAX_ADVANCE+1,1.5,True,'3'):
             with self.assertRaises(ValueError): Farm().advance(bad)
-    def test_scenario_names_and_refill_amount(self):
+    def test_scenario_names_and_top_up(self):
         self.assertEqual(set(SCENARIO_NAMES),set(SCENARIOS)); self.assertEqual(Farm().state()['scenarios'],SCENARIO_NAMES)
-        f=Farm('empty'); f.refill(50_000); self.assertEqual((f.tank,f.added),(50_000,50_000))
-        f.refill(); self.assertEqual(f.tank,50_000+f.env.refill_litres)
+        self.assertEqual(list(SCENARIOS),['healthy','one-zone','heatwave','shortage'])
+        f=Farm('shortage'); start=f.tank; f.refill(50_000)                # a top-up only fills the tank to capacity
+        self.assertEqual((f.tank,f.added),(f.capacity,f.capacity-start)); self.assertIn('did not fit',f.events[0]['text'])
+        f.refill(); self.assertEqual((f.tank,f.added),(f.capacity,f.capacity-start))
+    def test_every_scenario_starts_near_the_line(self):
+        cfg=Config()
+        for scenario in SCENARIOS:
+            f=Farm(scenario); self.assertTrue(any(c['moisture']<cfg.trigger for c in f.cells),scenario)
+            first=next((t for t in range(1,13) if f.advance(1) and f.last),None)
+            self.assertIsNotNone(first,scenario); self.assertLessEqual(first,8,scenario)   # agents act within 2 s at normal speed
+    # --- water supply ---
+    def test_supply_is_the_daily_quota(self):
+        cfg=Config(); env=EnvironmentConfig()
+        use=64*env.base_drying_rate*(24*60/cfg.tick_minutes)*cfg.litres_per_point       # average daily water use
+        self.assertAlmostEqual(cfg.supply_litres_per_day,use,delta=.02*use)
+        self.assertEqual(AgentConfig().comfortable_tank,cfg.tank_capacity_litres)       # a full tank is plentiful
+        self.assertLess(cfg.tank_capacity_litres,cfg.supply_litres_per_day*1.5)        # a buffer, not a reservoir
+    def test_normal_day_balances_and_heatwave_does_not(self):
+        f=Farm('healthy',env=replace(EnvironmentConfig(),rain_chance=0)); f.advance(48)
+        e0=f.evaporated; f.advance(48); day=f.evaporated-e0
+        self.assertAlmostEqual(day,f.config.supply_litres_per_day,delta=.05*day)           # a normal day: use ~ supply
+        h=Farm('healthy',env=replace(EnvironmentConfig(),rain_chance=0)); h.advance(48); h.trigger('heatwave')
+        e0=h.evaporated; h.advance(48); hot=h.evaporated-e0
+        self.assertGreater(hot,1.1*h.config.supply_litres_per_day)                       # a heatwave day needs more
+    def test_inflow_capacity_and_pump_failure(self):
+        f=Farm('shortage'); per=f.supply_per_cycle; t=f.tank
+        f.inflow(); self.assertAlmostEqual(f.tank,t+per); self.assertAlmostEqual(per,15_500/48)
+        f.tank=f.capacity-100; f.inflow(); self.assertEqual(f.tank,f.capacity); self.assertAlmostEqual(f.spilled,per-100)
+        f.tank=0; f.trigger('pump')
+        for _ in range(f.env.pump_failure_ticks): f.inflow()
+        self.assertEqual(f.tank,0); f.inflow(); self.assertAlmostEqual(f.tank,per)              # supply resumes after a day
+    def test_scenario_characters(self):
+        h=Farm('healthy'); h.advance(96)
+        self.assertTrue(all(r['status']=='approved' for r in h.logs))                          # supply meets need
+        o=Farm('one-zone'); o.step(); self.assertEqual((o.assessment['level'],o.assessment['stressed']),('local',['North']))
+        self.assertTrue(all(r['allocated']>0 for r in o.last if r['priority']=='critical'))    # critical plots still served
+        w=Farm('heatwave'); w.advance(48); w.step(); kinds={e['kind']:e['until'] for e in w.events}
+        self.assertEqual(kinds,{'heatwave':48+192,'drought':48+192})                           # hot and dry from day 2
+        w.advance(5*48); self.assertTrue(any(r['status']!='approved' for r in w.logs))         # a real shortage...
+        w.advance(2*48)                                                                         # ...that recovers
+        self.assertTrue(all(r['status']=='approved' for r in w.logs if 7*48 < r['tick'] <= 9*48))
+        s=Farm('shortage'); s.advance(3*48)
+        self.assertTrue(any(r['status']=='adjusted' for r in s.logs))                          # the Manager rations
+        self.assertFalse(any(c['moisture']<s.config.critical for c in s.cells))                # without collapse
     def test_soil_water_balance(self):
         soil=lambda f:sum(c['moisture'] for c in f.cells)*f.config.litres_per_point
         f=Farm(env=replace(EnvironmentConfig(),rain_chance=.2)); start=soil(f)   # rain on, no irrigation early on
         f.advance(3); self.assertEqual(f.used,0); self.assertGreater(f.rain_kept,0)
         self.assertAlmostEqual(soil(f)-start,f.rain_kept-f.evaporated,delta=1e-6)   # closes exactly without irrigation
-        f=Farm('normal',near_line=True); start=soil(f); f.trigger('heatwave'); f.advance(96)
+        f=Farm('healthy'); start=soil(f); f.trigger('heatwave'); f.advance(96)
         overflow=f.used+f.rain_kept-f.evaporated-(soil(f)-start)                   # irrigation past field capacity drains
         self.assertGreater(f.used,0); self.assertGreaterEqual(overflow,-1e-6); self.assertLess(overflow,.1*f.used)
         self.assertGreater(f.evaporated,f.used)                                    # the soil's own store covers part of it
@@ -351,13 +380,15 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(f.zone_history[-1][1:],[avg(z) for z in ZONES]); self.assertEqual(f.state()['zone_names'],ZONES)
         f.advance(MAX_ADVANCE); self.assertEqual(len(f.zone_history),ZONE_HISTORY)   # capped at 7 days + 1
     def test_events_for_the_chart(self):
-        f=Farm(); f.advance(3); f.trigger('heatwave'); f.trigger('drought'); f.refill(2000); f.trigger('water','N-01')
+        f=Farm(); f.advance(3); f.tank=10_000
+        f.trigger('heatwave'); f.trigger('drought'); f.trigger('pump'); f.refill(2000); f.trigger('water','N-01')
         e={x['kind']:x for x in f.events}
         self.assertEqual(e['heatwave']['until'],3+f.env.heatwave_ticks); self.assertEqual(e['drought']['until'],3+f.env.drought_ticks)
-        self.assertEqual((e['refill']['tick'],e['refill']['until'],e['refill']['text']),(3,None,'Added 2,000 L to the tank'))
+        self.assertEqual(e['pump']['until'],3+f.env.pump_failure_ticks)
+        self.assertEqual((e['refill']['tick'],e['refill']['until'],e['refill']['text']),(3,None,'Topped up the tank by 2,000 L'))
         self.assertEqual(e['water']['cell'],'N-01')
     def test_normal_scenario_is_healthy(self):
-        f=Farm('normal'); f.step()
+        f=Farm('healthy'); f.step()
         self.assertEqual(f.last,[])
         self.assertEqual(f.assessment['level'],'normal')
     def test_heatwave(self):

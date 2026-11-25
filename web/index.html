@@ -54,7 +54,6 @@
       </div>
       <div class="ctl-row ruled">
         <label class="inline"><span class="strong">Scenario</span><select id="scenario"></select></label>
-        <label class="inline check"><input type="checkbox" id="near-line"><span>Start some cells near the irrigation line</span></label>
         <span class="label">Changing the scenario resets the simulation</span>
       </div>
       <div class="ctl-row ruled events">
@@ -67,7 +66,10 @@
           <span><span class="ev-name">Drought</span><span class="ev-sub" id="ex-drought"></span></span></button>
         <button class="btn event" id="refill">
           <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><path d="M8 1.8c-2.5 3.3-3.8 5.3-3.8 7.1a3.8 3.8 0 007.6 0c0-1.8-1.3-3.8-3.8-7.1z" fill="var(--water)"/></svg>
-          <span><span class="ev-name">Add water</span><span class="ev-sub" id="ex-refill"></span></span></button>
+          <span><span class="ev-name">Top up tank</span><span class="ev-sub" id="ex-refill"></span></span></button>
+        <button class="btn event" data-event="pump">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--pump-icon)" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M4.2 4.2l7.6 7.6"/></svg>
+          <span><span class="ev-name">Pump failure</span><span class="ev-sub" id="ex-pump"></span></span></button>
         <div class="active-events"><span class="label">Active events</span><span id="active-events"></span></div>
       </div>
     </section>

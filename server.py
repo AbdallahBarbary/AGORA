@@ -30,7 +30,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data,dict): raise ValueError('Expected a JSON object')
             with lock:
                 if self.path=='/api/step': farm.advance(data.get('cycles',1))
-                elif self.path=='/api/reset': farm=Farm(data.get('scenario','normal'),near_line=data.get('near_line') is True)
+                elif self.path=='/api/reset': farm=Farm(data.get('scenario','healthy'))
                 elif self.path=='/api/refill': farm.refill(_litres(data.get('litres')))
                 elif self.path=='/api/event': farm.trigger(data.get('type'),data.get('cell'))
                 else: return self.respond({'error':'Not found'},404)

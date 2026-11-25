@@ -43,7 +43,8 @@ class EnvironmentConfig:
     drought_ticks: int = 144         # 3 days with no rain
     drought_drying_factor: float = 1.5  # dry air speeds up evaporation
     manual_water_litres: float = 1000   # hand-watering one cell (~9 points), from outside the shared tank
-    refill_litres: float = 5000      # the dashboard's "Add water" refill of the shared tank
+    refill_litres: float = 5000      # the dashboard's "Top up tank": litres added at once (up to the tank's capacity)
+    pump_failure_ticks: int = 48     # "Pump failure": the supply into the tank stops for 1 day
 
 
 def smooth_field(rng, rows, cols, passes):
@@ -132,13 +133,13 @@ class Weather:
         self.drought_left = max(0, self.drought_left - 1)
         return dict(temperature=temperature, drying_factor=factor, rain=rain)
 
-    def start_heatwave(self):
-        """Raise temperatures for heatwave_ticks cycles (restarts if already active)."""
-        self.heatwave_left = self.env.heatwave_ticks
+    def start_heatwave(self, ticks=None):
+        """Raise temperatures for `ticks` cycles, heatwave_ticks by default (restarts if already active)."""
+        self.heatwave_left = self.env.heatwave_ticks if ticks is None else ticks
 
-    def start_drought(self):
-        """Stop all rain and dry the air for drought_ticks cycles (restarts if already active)."""
-        self.drought_left = self.env.drought_ticks
+    def start_drought(self, ticks=None):
+        """Stop all rain and dry the air for `ticks` cycles, drought_ticks by default (restarts if already active)."""
+        self.drought_left = self.env.drought_ticks if ticks is None else ticks
         self.rain_left = 0
 
     def now(self, tick):

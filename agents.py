@@ -28,7 +28,7 @@ class AgentConfig:
     scarcity_price: float = 2.0     # ASSUMPTION: water's price rises from 1x (plentiful) to 3x (empty tank)
     part_fraction: float = .5       # ASSUMPTION: share of the gap in the "part of the gap" option
     # --- Manager's scarcity signal ---
-    comfortable_tank: float = 100_000  # ASSUMPTION: litres; a full Normal tank counts as plentiful
+    comfortable_tank: float = 30_000   # ASSUMPTION: litres; a full tank (Config.tank_capacity_litres) counts as plentiful
     # --- Problem scope and urgency: ASSUMPTION (project design) ---
     stressed_share: float = .25     # a zone is stressed when MORE than this share of its cells (> 4 of 16)
                                     # is estimated below the trigger

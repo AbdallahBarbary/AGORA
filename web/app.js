@@ -24,7 +24,7 @@ const ZONE_VAR = ['--z-north', '--z-east', '--z-west', '--z-south'];   // fixed 
 const zoneColor = z => `var(${ZONE_VAR[state.zone_names.indexOf(z)]})`;
 const agentName = n => n === 'Manager' ? 'Manager' : n === 'all' ? 'All agents' : `${n} agent`;
 const SPEEDS = [{label: 'Slow', hint: '1 cycle a second', ms: 1000, cycles: 1}, {label: 'Normal', hint: '4 cycles a second', ms: 250, cycles: 1},
-                {label: 'Fast', hint: 'a day in about 4 seconds', ms: 250, cycles: 3}, {label: 'Fastest', hint: 'a day in about 2 seconds', ms: 250, cycles: 6}];
+                {label: 'Fast', hint: 'a day in about 4 seconds', ms: 250, cycles: 3}];
 
 // ---------- soil colours: brown below critical, straw below the irrigation line, green above ----------
 function soil(v) {
@@ -75,7 +75,6 @@ function render() {
   if (!$('scenario').options.length) {                          // first load: lists come from the server
     $('scenario').innerHTML = Object.entries(state.scenarios).map(([k, n]) => `<option value="${esc(k)}">${esc(n)}</option>`).join('');
     $('zone-filter').innerHTML = '<option value="all">All zones</option>' + state.zone_names.map(z => `<option>${esc(z)}</option>`).join('');
-    $('near-line').checked = state.near_line;
   }
   $('scenario').value = state.scenario;
   renderControls();
@@ -90,10 +89,12 @@ function renderControls() {
   $('temp').textContent = `${Math.round(w.temperature)} °C${w.heatwave_left ? ' (heatwave)' : ''}`;
   $('ex-heatwave').textContent = `+${e.heatwave_extra_temp} °C for ${duration(e.heatwave_ticks)}, soil dries faster`;
   $('ex-drought').textContent = `No rain, ${e.drought_drying_factor}× faster drying for ${duration(e.drought_ticks)}`;
-  $('ex-refill').textContent = `Puts ${L(e.refill_litres)} into the shared tank`;
+  $('ex-refill').textContent = `Adds ${L(e.refill_litres)} to the tank (up to its capacity)`;
+  $('ex-pump').textContent = `No supply into the tank for ${duration(e.pump_failure_ticks)}`;
   const chips = [];
   if (w.heatwave_left) chips.push(`<span class="ev-chip"><span class="dot" style="background:var(--heat-icon)"></span>Heatwave · ${left(w.heatwave_left)}</span>`);
   if (w.drought_left) chips.push(`<span class="ev-chip"><span class="dot" style="background:var(--drought-icon)"></span>Drought · ${left(w.drought_left)}</span>`);
+  if (state.pump_off_left) chips.push(`<span class="ev-chip"><span class="dot" style="background:var(--pump-icon)"></span>Pump failure · ${left(state.pump_off_left)}</span>`);
   if (w.raining) chips.push(`<span class="ev-chip"><span class="dot" style="background:var(--water)"></span>Raining</span>`);
   $('active-events').innerHTML = chips.join('') || '<span class="small muted">None</span>';
   showPlay();
@@ -115,7 +116,7 @@ function renderField() {
       <span style="flex:${c.critical};background:${ramp(0, c.critical - .01)}"></span><span style="flex:${c.trigger - c.critical};background:${ramp(c.critical, c.trigger - .01)}"></span>
       <span style="flex:${100 - c.trigger};background:${ramp(c.trigger, 100)}"></span></span><span class="mono small muted">100%</span></span>
     <span><span class="pipe-key"></span>Pipe from the tank</span><span>${DROP_BADGE.replace('class="drop" ', '').replace('width="20" height="20"', 'width="16" height="16"')}Watered this cycle</span>`;
-  const full = state.agent_config.comfortable_tank, share = Math.max(0, Math.min(1, state.tank / full));
+  const full = state.capacity, share = Math.max(0, Math.min(1, state.tank / full));
   $('field').className = 'field' + (state.tank <= 0 ? ' dry' : '');
   $('field').innerHTML = `<div class="pipe v" aria-hidden="true"></div><div class="pipe h" aria-hidden="true"></div>` +
     state.zone_names.map(zoneBlock).join('') +
@@ -195,14 +196,16 @@ function renderManager() {
 
 // ---------- water tank ----------
 function renderTank() {
-  const s = state, full = s.agent_config.comfortable_tank, share = s.tank / full, use = dailyUse();
-  $('tank-ref').innerHTML = `Full tank <b style="color:var(--text)">${L(full)}</b>`;
+  const s = state, full = s.capacity, share = s.tank / full, use = dailyUse();
+  $('tank-ref').innerHTML = `Capacity <b style="color:var(--text)">${L(full)}</b>`;
   $('tank').innerHTML = `<div class="tank-level"><b>${L(s.tank)}</b><span class="soft">${share > 1 ? 'more than a full tank' : `of ${L(full)} · ${Math.round(share * 100)}% full`}</span></div>
     <div class="meter${share < .1 ? ' low' : ''}" role="meter" aria-label="Tank level" aria-valuemin="0" aria-valuemax="${full}" aria-valuenow="${Math.round(Math.min(s.tank, full))}"><span style="width:${Math.min(100, share * 100).toFixed(1)}%"></span></div>
     <div class="scale"><span>0 L</span><span>${L(full)} (full)</span></div>
     <div class="pair-loose"><div><div class="label">Covers about</div><div class="v">${s.tank > 0 ? `${(s.tank / use).toFixed(1)} days of average use` : 'Nothing'}</div><div class="label">The farm uses about ${L(Math.round(use / 1000) * 1000)} a day on average</div></div>
-      <div><div class="label">Used so far</div><div class="v">${L(s.used)}</div>${s.added ? `<div class="label">Added ${L(s.added)}</div>` : ''}</div></div>
-    ${s.tank <= 0 ? `<div class="empty-tank"><span class="strong">The tank is empty. Every request is rejected until water is added.</span><button class="btn water" data-action="refill">Add ${L(s.environment.refill_litres)}</button></div>` : ''}`;
+      <div><div class="label">Supply into the tank</div><div class="v">${s.pump_off_left ? 'Stopped' : `${L(s.supply_per_day)} a day`}</div>
+        <div class="label">${s.pump_off_left ? `Pump failure, ${left(s.pump_off_left)}` : `The farm's daily water quota`}</div></div></div>
+    <div class="label">Used so far ${L(s.used)} · supplied ${L(s.supplied)}${s.added ? ` · topped up ${L(s.added)}` : ''}${s.spilled ? ` · overflowed ${L(s.spilled)} while full` : ''}</div>
+    ${s.tank <= 0 ? `<div class="empty-tank"><span class="strong">The tank is empty. Requests are rejected until the supply or a top-up refills it.</span><button class="btn water" data-action="refill">Top up ${L(s.environment.refill_litres)}</button></div>` : ''}`;
 }
 
 // ---------- selected plot ----------
@@ -256,7 +259,7 @@ function drawChart() {
   const box = $('chart'), tip = $('chart-tip'), hist = state.zone_history, c = cfg(), zones = state.zone_names, last = hist[hist.length - 1];
   $('chart-legend').innerHTML = zones.map((z, i) => `<span><span style="width:16px;height:2px;border-radius:1px;background:${zoneColor(z)}"></span>${esc(z)} <b>${pct(last[i + 1])}</b></span>`).join('') +
     `<span><span class="band" style="background:var(--heat-band)"></span>Heatwave</span><span><span class="band" style="background:var(--drought-band)"></span>Drought</span>
-     <span><span style="width:2px;height:12px;background:var(--water)"></span>Water added</span>`;
+     <span><span class="band" style="background:var(--pump-band)"></span>Pump failure</span><span><span style="width:2px;height:12px;background:var(--water)"></span>Tank topped up</span>`;
   box.querySelector('svg')?.remove(); box.querySelector('.chart-empty')?.remove();
   const W = box.clientWidth, H = box.clientHeight;
   if (!W) return;
@@ -269,8 +272,11 @@ function drawChart() {
   for (const e of [...state.events].reverse()) {                           // heatwaves and droughts as shaded bands
     if (e.until == null) continue;
     const a = Math.max(t0, e.tick), b = Math.min(t1, e.until, last[0]);
-    if (b > a) { g += `<rect x="${X(a)}" y="${m.t}" width="${X(b) - X(a)}" height="${ph}" fill="var(--${e.kind === 'heatwave' ? 'heat' : 'drought'}-band)"/>`;
-      labels += `<text x="${X(a) + 8}" y="${m.t + 16}" font-size="11" fill="#D9B58A" ${HALO}>${e.kind === 'heatwave' ? 'Heatwave' : 'Drought'}</text>`; }
+    const band = {heatwave: ['heat', 'Heatwave'], drought: ['drought', 'Drought'], pump: ['pump', 'Pump failure']}[e.kind];
+    if (b > a) { const row = {heatwave: 0, drought: 1, pump: 2}[e.kind];        // overlapping events get their own label row
+      g += `<rect x="${X(a)}" y="${m.t}" width="${X(b) - X(a)}" height="${ph}" fill="var(--${band[0]}-band)" fill-opacity="${e.kind === 'drought' ? .7 : 1}"/>`;
+      const edge = X(a) > W - m.r - 90;                                     // near the right edge: keep the label inside
+      labels += `<text x="${edge ? W - m.r - 6 : X(a) + 8}" y="${m.t + 16 + row * 14}" text-anchor="${edge ? 'end' : 'start'}" font-size="11" fill="#D9B58A" ${HALO}>${band[1]}</text>`; }
   }
   for (const v of [c.target, c.trigger, c.critical, 0]) g += `<text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end" font-size="11" class="mono" fill="var(--muted)">${v}%</text>`;
   for (const [v, col, label, txt] of [[c.trigger, 'var(--line-trigger)', `Irrigation line ${c.trigger}%`, 'var(--soft)'], [c.critical, 'var(--line-critical)', `Critical line ${c.critical}%`, '#E09A82']])
@@ -370,23 +376,32 @@ function showView(v) {
 }
 
 // ---------- guided demo: the project's four scripted steps, captions built from the run ----------
-const DEMO_REFILL = 50000, below = s => s.cells.filter(c => c.moisture < s.config.trigger).length;
+const below = s => s.cells.filter(c => c.moisture < s.config.trigger).length;
+const lastDay = s => s.logs.filter(r => r.tick > s.tick - DAY());
+const counts = rs => ({ok: rs.filter(r => r.status === 'approved').length, cut: rs.filter(r => r.status === 'adjusted').length, no: rs.filter(r => r.status === 'rejected').length});
+let evapBefore = 0;                                       // soil evaporation total at the start of the last simulated day
 const DEMO = [
-  {title: 'A healthy farm', run: async () => { await api('reset', {scenario: 'normal', near_line: true}); await api('step', {cycles: 12}); },
-   caption: (a, b) => `Every zone starts well watered, but one patch starts just under the ${b.config.trigger}% line. Within a few cycles its zone agent asks the Manager for water and the Manager approves: those plots get a blue water badge and jump back to field capacity. Everyone else waits. Six hours in, ${L(b.used)} has been used.`},
-  {title: 'A heatwave', run: async () => { await api('event', {type: 'heatwave'}); await api('step', {cycles: DAY()}); },
-   figures: (a, b) => [['Lost to evaporation, this day', b.evaporated - a.evaporated, ''], ['Supplied from the tank, this day', b.used - a.used, 'water']],
-   caption: (a, b) => { const evap = b.evaporated - a.evaporated, irr = b.used - a.used, rain = b.rain_kept - a.rain_kept, soilDraw = evap - irr - rain;
-     return `The air is ${b.environment.heatwave_extra_temp} °C hotter for two days (shaded on the chart) and the soil dries about a fifth faster, so plots reach ${b.config.trigger}% sooner. ` +
-       `The soil lost ${L(evap)} to evaporation this day while the tank supplied ${L(irr)}${rain > 0 ? ` and rain ${L(rain)}` : ''}. ` +
-       (soilDraw >= 0 ? `The tank only refills a plot once it crosses ${b.config.trigger}%, so the other ${L(soilDraw)} came from water already stored in the soil.` : `Refills to field capacity put ${L(-soilDraw)} more into the soil than it lost.`); }},
-  {title: 'A water shortage', run: async () => { for (let d = 0; d < 15 && state.tank > 0; d++) await api('step', {cycles: DAY()}); await api('step', {cycles: DAY()}); },
-   caption: (a, b) => { const st = b.assessment?.stressed || [];
-     return `We skip ahead ${Math.round((b.tick - a.tick) / DAY())} days until the tank is empty, then one more day. ${below(b)} plots have drifted below ${b.config.trigger}%${st.length ? ` and ${list(st)} ${st.length > 1 ? 'are' : 'is'} stressed` : ''}. ` +
-       `With nothing in the tank the Manager has to reject every request, and the pipes in the field turn grey.`; }},
-  {title: 'Recovery after adding water', run: async () => { await api('refill', {litres: DEMO_REFILL}); await api('step', {cycles: 12}); },
-   caption: (a, b) => `We add ${L(DEMO_REFILL)} (the blue marker on the chart). The Manager approves requests again, and six hours later ${below(b)} plots are below ${b.config.trigger}%. ` +
-     `Refilling the dry plots took ${L(b.used - a.used)}. On an average day the soil loses about ${L(Math.round(b.cells.length * b.environment.base_drying_rate * DAY() * b.config.litres_per_point / 1000) * 1000)} to evaporation, and over time the tank has to replace all of it.`},
+  {title: 'A healthy farm', run: async () => { await api('reset', {scenario: 'healthy'}); await api('step', {cycles: DAY() / 2}); },
+   caption: (a, b) => { const c = counts(b.logs);
+     return `${L(b.supply_per_day)} flows into the tank every day, about what the farm uses. A few plots start just under the ${b.config.trigger}% line, so their agents ask for water within minutes and the Manager approves: ${c.ok} refills in 12 hours. ` +
+       `The ${L(b.capacity)} tank is a buffer: it dips as refills go out and the supply tops it back up. It holds ${L(b.tank)} now.`; }},
+  {title: 'One zone dries out', run: async () => { await api('reset', {scenario: 'one-zone'}); await api('step', {cycles: 12}); },
+   figures: (a, b) => [['Given to North, last 6 h', b.logs.filter(r => r.zone === 'North').reduce((t, r) => t + r.allocated, 0), 'water'],
+     ['North still needs, to reach field capacity', b.cells.filter(c => c.zone === 'North').reduce((t, c) => t + (b.config.target - c.moisture) * b.config.litres_per_point, 0), '']],
+   caption: (a, b) => { const c = counts(b.logs.filter(r => r.zone !== 'North'));
+     return `North starts parched, with plots below ${b.config.critical}%, while the rest of the farm is fine: a local problem. North's agent asks for far more than the tank holds, so the Manager serves North's critical plots first and shares each cycle's water between them` +
+       `${c.no + c.cut ? `; ${c.no + c.cut} requests from other zones were cut back or waited` : ''}. Supply is 1.5 times the quota here, and North recovers over the next day.`; }},
+  {title: 'A heatwave causes a shortage', run: async () => { await api('reset', {scenario: 'heatwave'});
+     for (let d = 0; d < 6; d++) { evapBefore = state.evaporated; await api('step', {cycles: DAY()}); if (lastDay(state).some(r => r.status !== 'approved')) break; } },
+   figures: (a, b) => [['Lost to evaporation, last day', b.evaporated - evapBefore, ''], ['Supplied to the tank, last day', b.supply_per_day, 'water']],
+   caption: (a, b) => { const c = counts(lastDay(b));
+     return `From day 2 the farm is hot and dry (+${b.environment.heatwave_extra_temp} °C and no rain, shaded on the chart), so plots dry much faster than the supply refills the tank. ` +
+       `By ${clockAt(b.tick - 1).split(' · ')[0]} the tank can't cover every request: that day the Manager approved ${c.ok} and cut back ${c.cut}${c.no ? `, rejected ${c.no}` : ''}, serving the driest plots first.`; }},
+  {title: 'Recovery', run: async () => { const hw = state.events.find(e => e.kind === 'heatwave'); const goal = (hw ? hw.until : state.tick) + 2 * DAY();
+     while (state.tick < goal) await api('step', {cycles: Math.min(DAY(), goal - state.tick)}); },
+   caption: (a, b) => { const c = counts(lastDay(b)), hw = b.events.find(e => e.kind === 'heatwave');
+     return `The heat breaks ${hw ? `at ${clockAt(hw.until)}` : ''}. Demand falls back to about the supply, the tank recovers to ${L(b.tank)}, and in the last day the Manager approved ${c.ok} of ${c.ok + c.cut + c.no} requests` +
+       `${c.cut + c.no ? '' : ' in full'}. The agents are back to routine top-ups.`; }},
 ];
 let demoStep = -1;
 async function demoGo(i) {
@@ -419,11 +434,11 @@ document.addEventListener('click', e => {
   if (t.dataset.filter) { msgFilter = t.dataset.filter; renderMessages(); }
   if (t.dataset.action === 'refill') api('refill', {});
 });
-const reset = () => { pause(); selected = null; flash = ''; api('reset', {scenario: $('scenario').value, near_line: $('near-line').checked}); };
+const reset = () => { pause(); selected = null; flash = ''; api('reset', {scenario: $('scenario').value}); };
 $('run').onclick = play;
 $('step').onclick = () => { pause(); api('step', {cycles: 1}); };
 $('skip').onclick = () => { pause(); api('step', {cycles: DAY()}); };
-$('reset').onclick = reset; $('scenario').onchange = reset; $('near-line').onchange = reset;
+$('reset').onclick = reset; $('scenario').onchange = reset;
 $('refill').onclick = () => api('refill', {});
 $('demo-start').onclick = () => demoGo(0); $('demo-next').onclick = () => demoGo(demoStep + 1); $('demo-exit').onclick = demoExit;
 $('view-farm').onclick = () => showView('farm'); $('view-details').onclick = () => showView('details');
