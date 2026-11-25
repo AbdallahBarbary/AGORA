@@ -22,6 +22,8 @@ SCENARIO_NAMES = {'normal': 'Healthy farm', 'one-zone': 'One dry zone, small tan
 # the trigger instead, so a few cells need water within the first cycles. ASSUMPTION (demo setting).
 NEAR_LINE_MARGIN = 5
 MAX_ADVANCE = 480   # most cycles one request may advance (10 days)
+ZONE_HISTORY = 337  # zone-average points kept for the dashboard chart (7 days + the start)
+EVENT_LOG = 100     # dashboard events kept (heatwaves, droughts, refills, hand-watering)
 
 @dataclass(frozen=True)
 class Config:
@@ -65,6 +67,7 @@ class Farm:
         self.tank=TANK[scenario]
         self.initial_water=self.tank; self.added=0; self.manual=0; self.events=[]
         self.evaporated=0.0; self.rain_kept=0.0   # litres, whole farm, since the start (soil water balance)
+        self.zone_history=[]   # [tick, average moisture per zone in ZONES order], for the dashboard chart
         self.sensor=SimulatedSensor(); self.actuator=SimulatedIrrigation()
         self.agent_config=agent_config or AgentConfig()
         self.agents=[ZoneAgent(z,self.agent_config) for z in ZONES]; self.manager=ManagerAgent(self.agent_config)
@@ -81,6 +84,7 @@ class Farm:
                 moisture=low+field[row][col]*(high-low)
                 self.cells.append(dict(id=f'{zone[0]}-{counts[zone]:02}',zone=zone,row=row,col=col,moisture=moisture,drying_scale=scales[row][col],history=[moisture]))
         self.readings=self.sensor.read(self.cells,self.rng,self.config)
+        self.record_zones()
 
     def step(self):
         conditions=self.weather.advance(self.tick)  # weather for the coming 30 minutes
@@ -102,7 +106,7 @@ class Farm:
             self.evaporated+=evaporated*lpp
             self.rain_kept+=(c['moisture']-old+evaporated)*lpp      # rain that stayed; any excess drains away
             c['history'].append(c['moisture']); c['history']=c['history'][-60:]
-        self.logs=(self.last+self.logs)[:500]; self.conditions=conditions
+        self.logs=(self.last+self.logs)[:500]; self.conditions=conditions; self.record_zones()
         return self.state()
 
     def drying_rate(self, cell):
@@ -115,21 +119,34 @@ class Farm:
         amount=self.env.refill_litres if amount is None else amount
         if not 0 < amount <= 1_000_000: raise ValueError('Refill must be between 0 and 1,000,000 L')
         self.tank+=amount; self.added+=amount
+        self.log_event('refill',f'Added {amount:,.0f} L to the tank')
+
+    def record_zones(self):
+        """Append each zone's average true moisture at the current tick (for the zone chart)."""
+        avg=lambda z:sum(c['moisture'] for c in self.cells if c['zone']==z)/sum(c['zone']==z for c in self.cells)
+        self.zone_history=(self.zone_history+[[self.tick]+[avg(z) for z in ZONES]])[-ZONE_HISTORY:]
+
+    def log_event(self, kind, text, cell=None, until=None):
+        """Record a dashboard event; `until` is the tick a timed event (heatwave, drought) ends."""
+        self.events=([dict(tick=self.tick,kind=kind,cell=cell,text=text,until=until)]+self.events)[:EVENT_LOG]
 
     def trigger(self, kind, cell=None):
         """Apply a dashboard event immediately. Cell events need a cell id."""
         if kind not in EVENTS: raise ValueError('Unknown event')
         e=self.env
+        until=None
         if kind=='heatwave':
-            self.weather.start_heatwave(); text=f'Heatwave: +{e.heatwave_extra_temp:g} °C for {e.heatwave_ticks*self.config.tick_minutes/60:g} h'
+            self.weather.start_heatwave(); until=self.tick+e.heatwave_ticks
+            text=f'Heatwave: +{e.heatwave_extra_temp:g} °C for {e.heatwave_ticks*self.config.tick_minutes/60:g} h'
         elif kind=='drought':
-            self.weather.start_drought(); text=f'Drought: no rain for {e.drought_ticks*self.config.tick_minutes/60:g} h'
+            self.weather.start_drought(); until=self.tick+e.drought_ticks
+            text=f'Drought: no rain for {e.drought_ticks*self.config.tick_minutes/60:g} h'
         else:
             c=next((c for c in self.cells if c['id']==cell),None)
             if c is None: raise ValueError('Unknown cell')
             c['moisture']=min(100,c['moisture']+e.manual_water_litres/self.config.litres_per_point)
             self.manual+=e.manual_water_litres; text=f'{cell} hand-watered (+{e.manual_water_litres:,.0f} L, outside the tank)'
-        self.events=([dict(tick=self.tick,kind=kind,cell=cell,text=text)]+self.events)[:20]
+        self.log_event(kind,text,cell,until)
 
     def advance(self, cycles=1):
         """Run several cycles in a row (for fast playback and 'skip a day'); same result as
@@ -141,7 +158,7 @@ class Farm:
 
     def state(self):
         return dict(tick=self.tick,scenario=self.scenario,near_line=self.near_line,scenarios=SCENARIO_NAMES,tank=self.tank,used=self.used,added=self.added,manual=self.manual,events=self.events,
-            evaporated=self.evaporated,rain_kept=self.rain_kept,
+            evaporated=self.evaporated,rain_kept=self.rain_kept,zone_names=ZONES,zone_history=self.zone_history,
             config=asdict(self.config),agent_config=asdict(self.agent_config),
             cells=[dict(c,reading=self.readings[c['id']],plan=self.assessments.get(c['id'])) for c in self.cells],
             messages=[{k:m[k] for k in ('id','first_cycle','cycle','repeats','sender','recipient','kind','text')} for m in self.bus.feed[:150]],

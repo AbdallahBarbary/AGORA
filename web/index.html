@@ -1,15 +1,143 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AGORA · Farm operations</title><link rel="stylesheet" href="/style.css"></head>
-<body><aside class="rail"><div class="brand">A<span>.</span></div><a href="#farm" title="Farm overview" aria-label="Farm overview">▦</a><a href="#messages" title="Agent messages" aria-label="Agent messages">✉</a><a href="#decisions" title="Agent decisions" aria-label="Agent decisions">☷</a><a href="#policy" title="Allocation policy" aria-label="Allocation policy">◎</a><div class="rail-bottom">01</div></aside>
-<header><div><strong>AGORA</strong><span class="divider">/</span><span>Farm operations</span></div><span class="tag blue">Simulation · Phase 01</span></header>
-<main><section class="hero"><div><div class="eyebrow">AGENTIC AGRICULTURE</div><h1>A clearer view of every cell.</h1><p>Four zones. One shared resource. Every decision explained.</p></div><div class="hero-actions"><span id="clock">Day 1 · 00:00</span><button id="demo-start">Guided demo</button><button id="run" class="primary">▶ Start simulation</button></div></section>
-<div id="error" role="alert" hidden></div>
-<section class="demo" id="demo" aria-live="polite" hidden><div><div class="eyebrow" id="demo-step"></div><h2 id="demo-title"></h2><p id="demo-caption"></p><div class="demo-figures" id="demo-figures"></div></div><div class="demo-actions"><button id="demo-next" class="primary">Next step</button><button id="demo-exit">Exit demo</button></div></section><section class="metrics" id="metrics"></section>
-<section class="report" id="report" aria-live="polite"></section>
-<section class="toolbar"><div class="scenario"><label for="scenario">Scenario</label><select id="scenario"></select><label class="check" title="Off by default. Applies when you pick a scenario or press Reset; the guided demo always starts near the line without changing this box."><input type="checkbox" id="near-line"> Start some cells near the irrigation line</label></div><div class="controls"><label for="speed">Speed</label><select id="speed"><option value="1000:1">Slow · 1 cycle/s</option><option value="250:1" selected>Normal · 4 cycles/s</option><option value="250:3">Fast · 1 day in 4 s</option><option value="250:6">Fastest · 1 day in 2 s</option></select><button id="step">Next cycle</button><button id="skip">Skip 1 day ⏭</button><button id="reset">Reset</button><button id="refill">+ Add 5,000 L</button></div></section>
-<section class="toolbar events-bar" aria-label="Farm events"><div class="scenario"><label>Events</label><button data-event="heatwave">Heatwave</button><button data-event="drought">Drought</button></div><div id="active-events" class="active-events" aria-live="polite"></div></section>
-<div class="workspace" id="farm"><section class="panel farm-panel"><div class="section-head"><div><h2>Farm overview <span class="muted">/ 64 cells</span> <span id="start-mode" class="tag amber" title="This run started with some cells just under the irrigation line" hidden>Started near the line</span></h2><p>% of available water (0 = wilting point, 100 = field capacity) · select a cell to inspect</p></div><span id="status" class="tag">Paused</span></div><div class="map-layout"><div><div class="zone-labels"><span>North zone</span><span>East zone</span></div><div id="grid" class="grid"></div><div class="zone-labels bottom"><span>West zone</span><span>South zone</span></div></div><div class="legend" id="legend"></div></div><div id="zones" class="zones"></div></section>
-<aside class="panel detail" id="detail"></aside></div>
-<section class="panel messages" id="messages"><div class="section-head"><div><h2>Agent messages</h2><p>Live message bus · zone recommendations and Manager replies</p></div><select id="msg-filter" aria-label="Filter messages"><option value="all">All messages</option><option value="recommendation">Recommendations</option><option value="decision">Manager decisions</option><option value="zone-status">Zone status</option><option value="tank-status">Tank broadcasts</option></select></div><ol id="feed" class="feed" aria-live="polite"></ol></section>
-<section class="panel decisions" id="decisions"><div class="section-head"><div><h2>Agent decisions</h2><p>Each zone recommendation next to the Manager's final decision</p></div><button id="export">Export log</button></div><div class="filters"><input id="search" placeholder="Search cell, zone or reasoning…" aria-label="Search decisions"><select id="severity" aria-label="Filter priority"><option value="all">All priorities</option><option value="critical">Critical</option><option value="normal">Normal</option></select><select id="zone-filter" aria-label="Filter zone"><option value="all">All zones</option><option>North</option><option>East</option><option>West</option><option>South</option></select><span id="result-count"></span></div><div class="table-wrap"><table><thead><tr><th>Cell / cycle</th><th>Zone forecast</th><th>Priority</th><th>Zone recommendation</th><th>Manager decision</th></tr></thead><tbody id="rows"></tbody></table></div></section>
-<footer id="policy"><div><strong>Manager-led allocation</strong><p>Zones forecast and recommend; the Manager alone decides. Critical cells first. Proportional allocation during shortages. No reserved zone shares.</p></div><span>Simulated data · Rule-based agents<br>Provisional parameters · Hardware planned</span></footer></main><script src="/app.js"></script></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AGORA · Farm irrigation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <div class="brand">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20"><path d="M10 2.5c-3 4-4.6 6.4-4.6 8.6a4.6 4.6 0 009.2 0c0-2.2-1.6-4.6-4.6-8.6z" fill="var(--water)"/></svg>
+      <span class="brand-name">AGORA</span><span class="brand-sub">Smart-farm irrigation</span>
+    </div>
+    <nav class="views" aria-label="Views">
+      <button id="view-farm" aria-current="page">Farm</button>
+      <button id="view-details">Details</button>
+    </nav>
+    <p class="tagline">Simulated farm · weather fitted to NOAA data · rule-based agents</p>
+    <button id="demo-start" class="btn">Start guided demo</button>
+  </div>
+</header>
+
+<div class="wrap page">
+  <div id="error" role="alert" hidden></div>
+
+  <section id="demo" class="card demo" aria-label="Guided demo" aria-live="polite" hidden>
+    <div class="demo-text">
+      <div class="demo-progress"><span id="demo-step"></span><span class="demo-bars" id="demo-bars" aria-hidden="true"></span></div>
+      <h2 id="demo-title"></h2>
+      <p id="demo-caption"></p>
+    </div>
+    <div class="demo-figures" id="demo-figures"></div>
+    <div class="demo-actions"><button id="demo-exit" class="btn">Exit</button><button id="demo-next" class="btn primary">Next</button></div>
+  </section>
+
+  <main id="farm-view">
+    <section class="card controls" aria-label="Simulation controls">
+      <div class="ctl-row">
+        <button id="run" class="btn primary play" aria-label="Play"></button>
+        <button id="step" class="btn">Step one cycle</button>
+        <button id="skip" class="btn">Skip one day</button>
+        <div class="segmented" role="group" aria-label="Speed"><span class="seg-label">Speed</span><span id="speeds"></span></div>
+        <div class="ctl-readouts">
+          <div><div class="label">Simulated clock</div><div class="mono big" id="clock"></div></div>
+          <div><div class="label">Air temperature</div><div class="mono big" id="temp"></div></div>
+          <button id="reset" class="btn">Reset</button>
+        </div>
+      </div>
+      <div class="ctl-row ruled">
+        <label class="inline"><span class="strong">Scenario</span><select id="scenario"></select></label>
+        <label class="inline check"><input type="checkbox" id="near-line"><span>Start some cells near the irrigation line</span></label>
+        <span class="label">Changing the scenario resets the simulation</span>
+      </div>
+      <div class="ctl-row ruled events">
+        <span class="strong">Trigger an event</span>
+        <button class="btn event" data-event="heatwave">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--heat-icon)" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg>
+          <span><span class="ev-name">Heatwave</span><span class="ev-sub" id="ex-heatwave"></span></span></button>
+        <button class="btn event" data-event="drought">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--drought-icon)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13.5h12M3.5 13.5l2-4 2 2 1.5-3.5 2 2.5 1.5-3"/></svg>
+          <span><span class="ev-name">Drought</span><span class="ev-sub" id="ex-drought"></span></span></button>
+        <button class="btn event" id="refill">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><path d="M8 1.8c-2.5 3.3-3.8 5.3-3.8 7.1a3.8 3.8 0 007.6 0c0-1.8-1.3-3.8-3.8-7.1z" fill="var(--water)"/></svg>
+          <span><span class="ev-name">Add water</span><span class="ev-sub" id="ex-refill"></span></span></button>
+        <div class="active-events"><span class="label">Active events</span><span id="active-events"></span></div>
+      </div>
+    </section>
+
+    <div class="row">
+      <section class="card field-card" aria-labelledby="field-title">
+        <div class="card-head">
+          <h2 id="field-title">The field <span class="sub" id="field-sub"></span></h2>
+          <div class="legend" aria-label="Legend" id="legend"></div>
+        </div>
+        <p class="note" id="field-note"></p>
+        <div class="field-scroll"><div class="field" id="field"></div></div>
+      </section>
+
+      <div class="side">
+        <section class="card" aria-labelledby="mgr-title">
+          <div class="card-head"><h2 id="mgr-title">What the Manager is doing</h2><span class="mono small muted" id="cycle-label"></span></div>
+          <div id="manager" aria-live="polite"></div>
+        </section>
+        <section class="card" aria-labelledby="tank-title">
+          <div class="card-head"><h2 id="tank-title">Water tank</h2><span class="small soft" id="tank-ref"></span></div>
+          <div id="tank"></div>
+        </section>
+        <section class="card" aria-labelledby="plot-title" aria-live="polite">
+          <div id="plot"></div>
+        </section>
+      </div>
+    </div>
+
+    <section class="card" aria-labelledby="chart-title">
+      <div class="card-head">
+        <h2 id="chart-title">Moisture over time <span class="sub">zone averages</span></h2>
+        <div class="chart-legend" id="chart-legend"></div>
+      </div>
+      <div class="chart" id="chart"><div class="chart-tip" id="chart-tip" hidden></div></div>
+    </section>
+  </main>
+
+  <main id="details-view" hidden>
+    <section class="card messages" aria-labelledby="msg-title">
+      <div><h2 id="msg-title">Agent messages</h2>
+        <p class="note">The conversation between the four zone agents and the Manager. Identical messages in a row are folded into one entry.</p></div>
+      <div class="chips" role="group" aria-label="Filter messages" id="msg-filters"></div>
+      <ol class="msg-list" id="messages"></ol>
+    </section>
+    <section class="card decisions" aria-labelledby="dec-title">
+      <div class="card-head">
+        <div><h2 id="dec-title">Agent decisions</h2>
+          <p class="note">One row per request. Estimate is the zone agent's smoothed view of the plot; forecast is its expected moisture in about an hour.</p></div>
+        <button id="export" class="btn"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M2.5 13.5h11"/></svg>Export log (CSV)</button>
+      </div>
+      <div class="filters">
+        <label class="stack grow"><span class="label">Search</span><input type="search" id="search" placeholder="Cell ID, for example E-07"></label>
+        <label class="stack"><span class="label">Priority</span><select id="priority"><option value="all">All</option><option value="critical">Critical</option><option value="normal">Normal</option></select></label>
+        <label class="stack"><span class="label">Zone</span><select id="zone-filter"><option value="all">All zones</option></select></label>
+        <span class="small muted count" id="row-count"></span>
+      </div>
+      <div class="table-box">
+        <table>
+          <thead><tr><th scope="col">Cycle</th><th scope="col">Time</th><th scope="col">Cell</th><th scope="col">Zone</th>
+            <th scope="col" class="num">Estimate</th><th scope="col" class="num">Forecast</th><th scope="col">Priority</th>
+            <th scope="col">Zone recommendation</th><th scope="col">Manager decision</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p class="empty" id="no-rows" hidden>No rows match these filters.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

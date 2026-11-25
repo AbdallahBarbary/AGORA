@@ -4,7 +4,7 @@ from dataclasses import replace
 from environment import EnvironmentConfig, Weather, drying_scales
 import random
 from collections import Counter
-from engine import Farm, MOISTURE, SCENARIOS, TANK, Config, SCENARIO_NAMES, NEAR_LINE_MARGIN, MAX_ADVANCE
+from engine import Farm, MOISTURE, SCENARIOS, TANK, Config, SCENARIO_NAMES, NEAR_LINE_MARGIN, MAX_ADVANCE, ZONES, ZONE_HISTORY
 from agents import AgentConfig
 from agents import ManagerAgent, ZoneAgent, MANAGER
 from forecast import TrendForecaster
@@ -344,6 +344,18 @@ class EngineTests(unittest.TestCase):
         overflow=f.used+f.rain_kept-f.evaporated-(soil(f)-start)                   # irrigation past field capacity drains
         self.assertGreater(f.used,0); self.assertGreaterEqual(overflow,-1e-6); self.assertLess(overflow,.1*f.used)
         self.assertGreater(f.evaporated,f.used)                                    # the soil's own store covers part of it
+    def test_zone_history_for_the_chart(self):
+        f=Farm(); self.assertEqual(len(f.zone_history),1); f.advance(5)
+        self.assertEqual([r[0] for r in f.zone_history],[0,1,2,3,4,5])
+        avg=lambda z:sum(c['moisture'] for c in f.cells if c['zone']==z)/16
+        self.assertEqual(f.zone_history[-1][1:],[avg(z) for z in ZONES]); self.assertEqual(f.state()['zone_names'],ZONES)
+        f.advance(MAX_ADVANCE); self.assertEqual(len(f.zone_history),ZONE_HISTORY)   # capped at 7 days + 1
+    def test_events_for_the_chart(self):
+        f=Farm(); f.advance(3); f.trigger('heatwave'); f.trigger('drought'); f.refill(2000); f.trigger('water','N-01')
+        e={x['kind']:x for x in f.events}
+        self.assertEqual(e['heatwave']['until'],3+f.env.heatwave_ticks); self.assertEqual(e['drought']['until'],3+f.env.drought_ticks)
+        self.assertEqual((e['refill']['tick'],e['refill']['until'],e['refill']['text']),(3,None,'Added 2,000 L to the tank'))
+        self.assertEqual(e['water']['cell'],'N-01')
     def test_normal_scenario_is_healthy(self):
         f=Farm('normal'); f.step()
         self.assertEqual(f.last,[])

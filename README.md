@@ -1,6 +1,6 @@
 # AGORA
 
-A local Python prototype of agent-led irrigation on an 8 × 8 simulated tomato farm. Four zone agents forecast their cells' soil moisture and recommend irrigation; a Manager agent decides how the shared tank is spent; they talk through a message bus you can watch on the dashboard. The weather is fitted to NOAA data from Tucson, Arizona, and the water amounts follow FAO-56. The custom dashboard follows the supplied video's charcoal panels, status colors, filters, and side inspector.
+A local Python prototype of agent-led irrigation on an 8 × 8 simulated tomato farm. Four zone agents forecast their cells' soil moisture and recommend irrigation; a Manager agent decides how the shared tank is spent; they talk through a message bus you can watch on the dashboard. The weather is fitted to NOAA data from Tucson, Arizona, and the water amounts follow FAO-56. The dashboard follows the AGORA design mock-up (warm dark panels, the field seen from above, a shared tank at the centre).
 
 ## Run
 
@@ -19,13 +19,28 @@ Run checks with `python -m unittest -v` from this directory. Re-derive the FITTE
 
 Moisture is **percent of available water**: 0 = wilting point, 100 = field capacity. A cell is healthy at 60% or more, needs water below 60% (40% of its available water used up, the FAO-56 tomato depletion fraction), and is critical below 30%. Irrigation refills to 100%. One point is 1% of a cell's available water, which is 112 L.
 
+## The dashboard
+
+**Farm** (the main view), top to bottom:
+
+- **Controls.** Play/Pause, Step one cycle, Skip one day and a Speed switch, with the simulated clock, air temperature and Reset. Below: the scenario and the near-line option, then the three events (Heatwave, Drought, Add water), each with a one-line explanation and the events still running.
+- **The field.** The 64 plots in their four zones, seen from above. Colour is soil moisture: brown below the critical line (30%), straw below the irrigation line (60%), green above; the numbers are each plot's real moisture. Blue pipes run from the shared tank at the centre (its dial shows how full it is; the pipes turn grey when it's empty). A blue badge marks plots watered this cycle; each zone shows its average, how many plots need water, a *Stressed* tag and *Receiving water* when it applies.
+- **What the Manager is doing.** The farm assessment (normal, local or farm-wide), what was asked for and what was approved, reduced or rejected and why, and a *Water is short* box when the tank can't cover everything.
+- **Water tank.** Litres left against a full tank (100,000 L), how many days of average use that covers, and what has been used and added. An empty tank shows a button to add water.
+- **Selected plot.** Click a plot: its real moisture, sensor reading, the agent's estimate and forecast, its recent history, and in plain sentences what its zone agent asked for and what the Manager decided. You can water it by hand from here.
+- **Moisture over time.** Each zone's average over the last 7 days, with the 60% and 30% lines, heatwaves and droughts as shaded bands and water added as markers. Hover (or focus it and use the arrow keys) to read every zone at one moment.
+
+**Details** has the agents' message feed (filterable; unchanged repeats are folded) and the decision table, with search, priority and zone filters and a CSV export.
+
+Thresholds, sizes, names and amounts on screen come from the server's settings. The page loads its two typefaces (Instrument Sans, IBM Plex Mono) from Google Fonts and falls back to system fonts offline.
+
 ## Demonstration
 
-**Guided demo.** Press **Guided demo** (top right). It walks through four steps, each with a caption explaining what to notice. The numbers in the captions are read from the run as it happens:
+**Guided demo.** Press **Start guided demo** (top right). It walks through four steps, each with a caption explaining what to notice. The numbers in the captions are read from the run as it happens:
 
 1. **A healthy farm.** Every zone starts well watered except one patch just under the 60% line. Within a few cycles its zone agent recommends water, and the Manager approves.
-2. **A heatwave.** +10 °C for two days: the temperature card turns red and soil dries about a fifth faster. Two figures sit side by side: **evaporation from the soil** (about 37,000 L that day) and **irrigation from the tank** (about 28,000 L). The tank only refills cells that cross 60%, so the rest is drawn from water already stored in the soil.
-3. **A water shortage.** The demo skips ahead until the tank is empty, plus one more day. Cells drift below 60%, zones become stressed, and the Manager rejects recommendations with the report showing **water short**.
+2. **A heatwave.** +10 °C for two days (shaded on the chart) and soil dries about a fifth faster. Two figures sit side by side: **evaporation from the soil** (about 37,000 L that day) and **irrigation from the tank** (about 28,000 L). The tank only refills cells that cross 60%, so the rest is drawn from water already stored in the soil.
+3. **A water shortage.** The demo skips ahead until the tank is empty, plus one more day. Plots drift below 60%, zones become stressed, the Manager rejects every request because the tank is empty, and the pipes in the field turn grey.
 4. **Recovery.** 50,000 L is added. The waiting recommendations are approved, and within six hours every dry cell is back to field capacity, using most of the new water. On an average day the soil loses about 31,000 L to evaporation (more in a heatwave), and over time the tank has to replace all of it.
 
 **Scenarios** (dropdown; selecting one resets the run with seed 42):
@@ -37,7 +52,7 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 | Dry farm, little water | 10,000 L | 15–45% |
 | Dry farm, empty tank | 0 L | 15–45% |
 
-**Start some cells near the irrigation line** is off by default. Tick it to start the well-watered ranges at 55% instead (5 points under the line); a few cells then need water within the first cycles, so agents act within seconds. The dry ranges don't change. The box applies whenever you pick a scenario or press Reset. The guided demo always starts near the line on its own and leaves the box as you set it, so a plain **Healthy farm** run afterwards uses the usual ranges. A **Started near the line** tag on the farm map shows when the current run began that way.
+**Start some cells near the irrigation line** (under the scenario) is off by default. Tick it to start the well-watered ranges at 55% instead (5 points under the line); a few cells then need water within the first cycles, so agents act within seconds. The dry ranges don't change. The box applies whenever you pick a scenario or press Reset. The guided demo always starts near the line on its own and leaves the box as you set it, so a plain **Healthy farm** run afterwards uses the usual ranges. A **Started near the line** tag on the farm map shows when the current run began that way.
 
 **Playback.** Each cycle is 30 simulated minutes, whatever the speed:
 
@@ -48,7 +63,7 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 | Fast | a day in 4 s |
 | Fastest | a day in 2 s |
 
-**Next cycle** advances exactly one cycle and **Skip 1 day ⏭** advances 48; both pause playback. Speed only changes how fast you see it: results are the same at every speed and repeat exactly with the seed.
+**Step one cycle** advances exactly one cycle and **Skip one day** advances 48; both pause playback. Speed only changes how fast you see it: results are the same at every speed and repeat exactly with the seed.
 
 **Other things to try:**
 
@@ -57,7 +72,7 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 - **Dry farm, little water:** because the Manager announces scarce water, zone agents recommend only part of each gap. In the first cycle only critical cells act, since the rest are still collecting readings. The 10,000 L covers about 9% of what they ask for and runs out at once. The Manager report shows **water short** and which zones were prioritised, reduced or delayed.
 - **Dry farm, empty tank:** advance a cycle, press **+ Add 5,000 L**, then advance again. Irrigation resumes.
 - Select any cell to inspect its history, its 1-hour forecast, the scores of each option, and the Manager's decision. Filter the log by zone or priority and export it (with the message feed) as JSON.
-- While it runs, trigger **Heatwave** (+10 °C for 2 days) or **Drought** (no rain and drier air for 3 days) from the Events bar. In the cell inspector, **Water cell** hand-waters the selected cell (+1,000 L, outside the shared tank).
+- While it runs, trigger **Heatwave** (+10 °C for 2 days) or **Drought** (no rain and drier air for 3 days) from the controls. In the selected-plot panel, **Water by hand** waters the selected cell (+1,000 L, outside the shared tank).
 
 ## How it works
 
@@ -68,11 +83,11 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 3. For each cell it scores three options (wait, part of the gap, full gap) with the project deck's utility `0.5 × benefit + 0.3 × urgency − 0.2 × cost`, each term scaled 0–1. Benefit is the share of the cell's available water restored, counted only below the 60% line (above it the crop isn't stressed). Urgency is the stress avoided: how far below 60% the cell would be, counted double below 30%. Cost is the share of available water used, times the Manager's price. It sends the Manager a recommendation with its reason for every cell that shouldn't wait, plus one zone status. A zone is stressed when more than 4 of its 16 cells are estimated below 60%.
 4. The Manager is the only agent that decides. It allocates critical recommendations first, then normal ones, sharing proportionally when short and never exceeding the tank. It marks each recommendation approved, adjusted or rejected, with a reason, and replies to each zone. Only approved water reaches the actuator.
 
-The dashboard shows the message feed and, in the decision log, each zone's recommendation next to the Manager's decision. Every message is delivered every cycle, but the feed folds an unchanged repeat (the same rejection, the same recommendation, the same tank broadcast within 3 hours) into one entry with its cycle range and a repeat count, so an empty tank doesn't flood it.
+The **Details** view shows the message feed and, in the decision table, each zone's recommendation next to the Manager's decision. Every message is delivered every cycle, but the feed folds an unchanged repeat (the same rejection, the same recommendation, the same tank broadcast within 3 hours) into one entry with its cycle range and a repeat count, so an empty tank doesn't flood it.
 
 `environment.py` holds the environment the agents live in: `EnvironmentConfig` (all weather and event numbers), `Weather` (daily temperature cycle, random rain, heatwave and drought), and `smooth_field` (starting moisture where neighbouring cells are similar), and `drying_scales` (per-cell drying multipliers in similar patches). Each cycle, irrigation is applied first, then rain adds moisture and evaporation removes `base drying rate × cell drying scale × weather drying factor`. The drying factor grows with temperature, drops while it rains, and rises during a drought. Weather uses its own random stream, so it never shifts the sensor noise.
 
-`server.py` exposes the state and step/reset/refill/event actions on a local HTTP server; a step can advance up to 480 cycles at once (that's how fast playback and **Skip 1 day** work). `web/` provides the custom browser interface. State lives in memory and is shared between browser tabs. Restarting the server resets it. The simulation advances only while the browser runs it or the user requests a step.
+`server.py` exposes the state and step/reset/refill/event actions on a local HTTP server; a step can advance up to 480 cycles at once (that's how fast playback and **Skip one day** work). `web/` provides the custom browser interface. State lives in memory and is shared between browser tabs. Restarting the server resets it. The simulation advances only while the browser runs it or the user requests a step.
 
 `calibrate.py` re-derives the FITTED weather numbers from the NOAA data in `data/uscrn/` and compares them with the code. `test_engine.py` holds the unit tests. `data/` holds the downloaded calibration data (git-ignored, apart from its README).
 
@@ -136,7 +151,7 @@ Every tunable number in the project, taken from the code (`engine.py` `Config`, 
 
 Each cell dries at the base rate times its own drying scale. The scales sit around 1 (about 0.8–1.2), come in slow- and fast-drying patches made with the same smoothing as the starting moisture, and average exactly 1 across the farm, so the base rate is the farm-average rate. The agents' water cost is a share of the cell's available water, not litres, so their decisions don't change when the litres-per-point conversion does. None of this is an agronomic recommendation.
 
-The farm map shows internal simulator state. Agents receive noisy sensor values (not clipped, so they can read past 0 or 100) and act on their smoothed estimate; the inspector shows the raw reading, the estimate and the forecast separately. History retains 60 points; the decision log and export retain the latest 500 per-cell decisions. Zone totals describe the latest cycle, while tank usage is cumulative.
+The farm map shows internal simulator state. Agents receive noisy sensor values (not clipped, so they can read past 0 or 100) and act on their smoothed estimate; the selected-plot panel shows the real moisture, the raw reading, the estimate and the forecast separately. History retains 60 points; the decision log and export retain the latest 500 per-cell decisions. Zone totals describe the latest cycle, while tank usage is cumulative.
 
 The agents use explicit rules, not a trained prediction model or an LLM; the forecaster sits behind an interface so a trained model can replace it later. It does not include temperature control, seeding, soil water movement between cells, negotiation between zones, joint assessment, persistence, or real hardware. Hardware adapters can later implement the sensor and actuator boundaries, with additional feedback and failure handling required before physical use.
 
