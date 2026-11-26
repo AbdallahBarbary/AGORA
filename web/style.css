@@ -208,3 +208,24 @@ td.cell-id{font-family:'IBM Plex Mono',ui-monospace,monospace;font-weight:500}
 .ctl-readouts{flex-wrap:wrap;gap:12px 24px}.ctl-readouts .big{white-space:nowrap}
 .export-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 @media(max-width:760px){.export-actions{width:100%}.export-actions button{flex:1}}
+.run-history-head,.saved-runs-card,.compare-panel{margin-bottom:16px}
+.save-run-row{display:flex;align-items:flex-end;gap:12px;padding:14px 18px 4px}
+.save-run-row .stack{min-width:240px}.save-run-row input{width:100%}
+.runs-table{min-width:1120px}.runs-table th,.runs-table td{white-space:nowrap}
+.runs-table td:nth-child(2){white-space:normal;min-width:190px;max-width:280px}
+.runs-table td:nth-child(10){white-space:normal;min-width:210px}
+.runs-table input[type=checkbox]{accent-color:var(--water);width:17px;height:17px}
+.small-btn{min-height:30px;padding:4px 10px;font-size:12px}
+.compare-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;padding:16px 20px}
+.compare-chart{min-width:0;background:var(--sunk);border:1px solid var(--border);border-radius:8px;padding:14px}
+.compare-chart h3{margin:0 0 13px;font-size:13px;font-weight:500}
+.compare-bar-row{display:grid;grid-template-columns:minmax(95px,1fr) minmax(80px,2fr) auto;gap:10px;align-items:center;margin:9px 0;font-size:12px}
+.compare-bar-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--soft)}
+.compare-bar-track{height:9px;background:var(--raised);border-radius:8px;overflow:hidden}
+.compare-bar-track i{height:100%;display:block;border-radius:8px;min-width:2px}
+.compare-bar-row b{font:500 11px 'IBM Plex Mono',monospace;white-space:nowrap}
+.compare-table{min-width:640px}.compare-table thead small{display:block;color:var(--muted);font-weight:400;margin-top:4px}
+.compare-table tbody th{position:static;background:transparent;color:var(--soft);font-weight:400;white-space:nowrap}
+.compare-table tbody td{font-variant-numeric:tabular-nums}
+#run-feedback{padding:0 18px 10px}
+@media(max-width:760px){.save-run-row{align-items:stretch;flex-direction:column}.save-run-row .stack{min-width:0}.save-run-row button{width:100%}.compare-charts{grid-template-columns:1fr;padding:12px}}

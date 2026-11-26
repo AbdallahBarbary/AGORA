@@ -4,3 +4,8 @@ reference/
 # Downloaded calibration data (~4 MB): keep files local, track only the provenance note
 data/*
 !data/README.md
+
+# Local saved simulation runs
+agora_runs.sqlite3
+agora_runs.sqlite3-shm
+agora_runs.sqlite3-wal

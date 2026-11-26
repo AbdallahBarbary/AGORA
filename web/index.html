@@ -20,6 +20,7 @@
     <nav class="views" aria-label="Views">
       <button id="view-farm" aria-current="page">Farm</button>
       <button id="view-details">Details</button>
+      <button id="view-runs">Run history</button>
     </nav>
     <p class="tagline">Simulated farm · weather fitted to NOAA data · rule-based agents</p>
     <button id="demo-start" class="btn">Start guided demo</button>
@@ -137,6 +138,38 @@
         </table>
         <p class="empty" id="no-rows" hidden>No rows match these filters.</p>
       </div>
+    </section>
+  </main>
+
+  <main id="runs-view" hidden>
+    <section class="card run-history-head">
+      <div class="card-head"><div><h2>Saved runs</h2>
+        <p class="note">Save a simulation snapshot, then compare up to four runs. Saved runs remain after resets and server restarts.</p></div>
+        <button id="refresh-runs" class="btn">Refresh</button></div>
+      <div class="save-run-row">
+        <label class="stack grow"><span class="label">Run name (optional)</span><input id="run-name" maxlength="80" placeholder="For example: Heatwave test - 3 days"></label>
+        <button id="save-run" class="btn primary" disabled>Save current run</button>
+      </div>
+      <p id="run-feedback" class="note" aria-live="polite">Advance at least one cycle to save a run.</p>
+    </section>
+    <section class="card saved-runs-card">
+      <div class="card-head"><div><h2>Run archive</h2><p class="note">Choose two or more saved runs to compare their outcomes.</p></div>
+        <button id="compare-runs" class="btn primary" disabled>Compare selected</button></div>
+      <div class="table-box runs-table-box">
+        <table class="runs-table">
+          <thead><tr><th scope="col">Compare</th><th scope="col">Run</th><th scope="col">Scenario</th><th scope="col">Saved</th>
+            <th scope="col" class="num">Duration</th><th scope="col" class="num">Avg. moisture</th><th scope="col" class="num">Critical plots</th>
+            <th scope="col" class="num">Irrigation</th><th scope="col" class="num">Tank</th><th scope="col">Latest decisions</th><th scope="col">Report</th></tr></thead>
+          <tbody id="saved-runs"></tbody>
+        </table>
+        <p id="no-saved-runs" class="empty" hidden>No saved runs yet. Run a scenario, then save it here.</p>
+      </div>
+    </section>
+    <section id="compare-panel" class="card compare-panel" hidden>
+      <div class="card-head"><div><h2>Run comparison</h2><p class="note">Compare the selected results using the same simulation measures.</p></div>
+        <button id="close-comparison" class="btn">Close</button></div>
+      <div id="compare-charts" class="compare-charts"></div>
+      <div class="table-box"><table class="compare-table"><thead id="compare-head"></thead><tbody id="compare-body"></tbody></table></div>
     </section>
   </main>
 </div>

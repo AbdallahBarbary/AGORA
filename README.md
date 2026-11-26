@@ -31,7 +31,7 @@ Moisture is **percent of available water**: 0 = wilting point, 100 = field capac
 - **Selected plot.** Click a plot: its real moisture, sensor reading, the agent's estimate and forecast, its recent history, and in plain sentences what its zone agent asked for and what the Manager decided. You can water it by hand from here.
 - **Moisture over time.** Each zone's average over the last 7 days, with the 60% and 30% lines, heatwaves and droughts as shaded bands and water added as markers. Hover (or focus it and use the arrow keys) to read every zone at one moment.
 
-**Details** has the agents' message feed (filterable; unchanged repeats are folded) and the decision table, with search, priority and zone filters and a CSV export.
+**Details** has the agents' message feed (filterable; unchanged repeats are folded) and the decision table, with search, priority and zone filters and a CSV export. **Run history** saves a persistent snapshot of the current simulation to a local SQLite archive. Name each run if you like, select up to four saved runs, compare their moisture, critical plots, tank, water use and latest-cycle decisions, and download a PDF for an archived run. The archive is stored in `agora_runs.sqlite3` beside the server; it is local to this machine and ignored by Git.
 
 Thresholds, sizes, names and amounts on screen come from the server's settings. The page loads its two typefaces (Instrument Sans, IBM Plex Mono) from Google Fonts and falls back to system fonts offline.
 

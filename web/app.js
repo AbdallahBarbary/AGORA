@@ -3,6 +3,7 @@
 'use strict';
 let state = null, view = 'farm', selected = null, flash = '', timer = null, busy = false, pending = Promise.resolve();
 let speedIdx = 1, msgFilter = 'all';
+let runHistory = [], selectedRunIds = new Set();
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const num = n => Math.round(n).toLocaleString('en-US');
@@ -79,7 +80,8 @@ function render() {
   $('scenario').value = state.scenario;
   renderControls();
   if (view === 'farm') { renderField(); renderManager(); renderTank(); renderPlot(); drawChart(); }
-  else { renderMessages(); renderRows(); }
+  else if (view === 'details') { renderMessages(); renderRows(); }
+  else renderRunsView();
 }
 
 function renderControls() {
@@ -384,13 +386,114 @@ async function exportReport() {
   } finally { button.disabled = false; button.textContent = label; }
 }
 
+// ---------- saved runs and side-by-side comparison ----------
+function runHours(hours) {
+  const minutes = Math.round(Number(hours || 0) * 60);
+  return minutes % 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes / 60} h`;
+}
+function savedAt(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+function renderRunsView() {
+  if (!state) return;
+  $('save-run').disabled = state.tick < 1;
+  if (state.tick > 0 && $('run-feedback').textContent === 'Advance at least one cycle to save a run.')
+    $('run-feedback').textContent = 'Save a snapshot of the current simulation. You can name it or use the suggested name.';
+  const runs = runHistory;
+  $('no-saved-runs').hidden = runs.length > 0;
+  $('saved-runs').innerHTML = runs.map(run => {
+    const s = run.summary, d = s.latest_decisions || {};
+    return `<tr><td><input type="checkbox" data-run-select="${run.id}" aria-label="Select ${esc(run.name)} for comparison" ${selectedRunIds.has(run.id) ? 'checked' : ''}></td>
+      <td><strong>${esc(run.name)}</strong></td><td>${esc(s.scenario_name || run.scenario)}</td><td>${esc(savedAt(run.saved_at_utc))}</td>
+      <td class="num">${esc(runHours(s.simulated_hours))}</td><td class="num">${pct(s.average_moisture)}</td>
+      <td class="num">${s.critical_plots} / ${s.plot_count}</td><td class="num">${L(s.used)}</td>
+      <td class="num">${L(s.tank)}</td><td>${d.approved || 0} approved · ${d.adjusted || 0} adjusted · ${d.rejected || 0} rejected</td>
+      <td><button class="btn small-btn" data-run-pdf="${run.id}" aria-label="Download report for ${esc(run.name)}">PDF</button></td></tr>`;
+  }).join('');
+  $('compare-runs').disabled = selectedRunIds.size < 2;
+  $('compare-runs').textContent = selectedRunIds.size > 0 ? `Compare selected (${selectedRunIds.size}/4)` : 'Compare selected';
+  if (!$('compare-panel').hidden) renderRunComparison();
+}
+async function loadRuns() {
+  try {
+    const response = await fetch('/api/runs'), data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load saved runs.');
+    runHistory = data.runs || [];
+    selectedRunIds = new Set([...selectedRunIds].filter(id => runHistory.some(r => r.id === id)));
+    renderRunsView();
+  } catch (error) {
+    $('run-feedback').textContent = `Could not load saved runs: ${error.message}`;
+  }
+}
+async function saveCurrentRun() {
+  const button = $('save-run'); button.disabled = true; $('run-feedback').textContent = 'Saving a snapshot of the current run...';
+  try {
+    const response = await fetch('/api/runs', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:$('run-name').value.trim()})});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not save this run.');
+    runHistory = [data.run, ...runHistory.filter(r => r.id !== data.run.id)];
+    if (selectedRunIds.size >= 4) selectedRunIds.clear();
+    selectedRunIds.add(data.run.id); $('run-name').value = '';
+    $('run-feedback').textContent = `Saved "${data.run.name}". Select another saved run to compare them.`;
+    renderRunsView();
+  } catch (error) {
+    $('run-feedback').textContent = `Could not save this run: ${error.message}`;
+  } finally { button.disabled = state.tick < 1; }
+}
+function renderCompareChart(metric, label, maximum, formatter, colorIndex) {
+  const colors = ['var(--z-north)', 'var(--z-east)', 'var(--z-west)', 'var(--z-south)'];
+  const max = Math.max(maximum, 1);
+  return `<section class="compare-chart"><h3>${label}</h3>${comparisonRuns.map((run, i) => {
+    const value = Number(run.summary[metric] || 0), width = Math.min(100, value / max * 100);
+    return `<div class="compare-bar-row"><span class="compare-bar-name" title="${esc(run.name)}">${esc(run.name)}</span>
+      <span class="compare-bar-track"><i style="width:${width}%;background:${colors[i % colors.length]}"></i></span>
+      <b>${formatter(value)}</b></div>`;
+  }).join('')}</section>`;
+}
+let comparisonRuns = [];
+function renderRunComparison() {
+  comparisonRuns = runHistory.filter(run => selectedRunIds.has(run.id)).slice(0, 4);
+  $('compare-panel').hidden = comparisonRuns.length < 2;
+  if (comparisonRuns.length < 2) return;
+  const maxUsed = Math.max(...comparisonRuns.map(r => Number(r.summary.used || 0)));
+  $('compare-charts').innerHTML = renderCompareChart('average_moisture', 'Average plot moisture', 100, v => `${pct(v)}`, 0) +
+    renderCompareChart('used', 'Irrigation applied', maxUsed, L, 0);
+  $('compare-head').innerHTML = `<tr><th>Measure</th>${comparisonRuns.map(r => `<th>${esc(r.name)}<small>${esc(r.summary.scenario_name || r.scenario)}</small></th>`).join('')}</tr>`;
+  const rows = [
+    ['Duration', r => runHours(r.summary.simulated_hours)],
+    ['Average moisture', r => pct(r.summary.average_moisture)],
+    ['Plots below critical', r => `${r.summary.critical_plots} / ${r.summary.plot_count}`],
+    ['Final tank', r => `${L(r.summary.tank)} / ${L(r.summary.capacity)}`],
+    ['Irrigation applied', r => L(r.summary.used)],
+    ['Water supplied', r => L(r.summary.supplied)],
+    ['Evaporation', r => L(r.summary.evaporated)],
+    ['Latest-cycle decisions', r => { const d=r.summary.latest_decisions||{}; return `${d.approved||0} approved / ${d.adjusted||0} adjusted / ${d.rejected||0} rejected`; }],
+  ];
+  $('compare-body').innerHTML = rows.map(([label, value]) => `<tr><th>${label}</th>${comparisonRuns.map(r => `<td>${value(r)}</td>`).join('')}</tr>`).join('');
+}
+async function downloadSavedReport(id, button) {
+  const old = button.textContent; button.disabled = true; button.textContent = '...';
+  try {
+    const response = await fetch(`/api/runs/${id}/report.pdf`);
+    if (!response.ok) { let d={}; try {d=await response.json()} catch (_) {} throw new Error(d.error || 'PDF export failed.'); }
+    const url = URL.createObjectURL(await response.blob()), a = document.createElement('a');
+    a.href = url; a.download = `agora-saved-run-${id}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (error) { $('run-feedback').textContent = error.message; }
+  finally { button.disabled = false; button.textContent = old; }
+}
+
 // ---------- views ----------
 function showView(v) {
   view = v;
-  $('farm-view').hidden = v !== 'farm'; $('details-view').hidden = v !== 'details';
-  $('view-farm').toggleAttribute('aria-current', v === 'farm'); $('view-details').toggleAttribute('aria-current', v === 'details');
-  if (v === 'farm') $('view-farm').setAttribute('aria-current', 'page'); else $('view-details').setAttribute('aria-current', 'page');
+  $('farm-view').hidden = v !== 'farm'; $('details-view').hidden = v !== 'details'; $('runs-view').hidden = v !== 'runs';
+  for (const [id, value] of [['view-farm','farm'],['view-details','details'],['view-runs','runs']]) {
+    $(id).toggleAttribute('aria-current', v === value);
+    if (v === value) $(id).setAttribute('aria-current', 'page');
+  }
   if (state) render();
+  if (v === 'runs') loadRuns();
 }
 
 // ---------- guided demo: the project's four scripted steps, captions built from the run ----------
@@ -441,6 +544,8 @@ function demoExit() { demoStep = -1; $('demo').hidden = true; }
 
 // ---------- wiring ----------
 document.addEventListener('click', e => {
+  const runPdf = e.target.closest('[data-run-pdf]');
+  if (runPdf) return downloadSavedReport(runPdf.dataset.runPdf, runPdf);
   const t = e.target.closest('[data-event],[data-cell],[data-speed],[data-filter],[data-action]');
   if (!t) return;
   if (t.dataset.event) {
@@ -459,7 +564,20 @@ $('skip').onclick = () => { pause(); api('step', {cycles: DAY()}); };
 $('reset').onclick = reset; $('scenario').onchange = reset;
 $('refill').onclick = () => api('refill', {});
 $('demo-start').onclick = () => demoGo(0); $('demo-next').onclick = () => demoGo(demoStep + 1); $('demo-exit').onclick = demoExit;
-$('view-farm').onclick = () => showView('farm'); $('view-details').onclick = () => showView('details');
+$('view-farm').onclick = () => showView('farm'); $('view-details').onclick = () => showView('details'); $('view-runs').onclick = () => showView('runs');
+$('save-run').onclick = saveCurrentRun; $('refresh-runs').onclick = loadRuns;
+$('compare-runs').onclick = () => { renderRunComparison(); $('compare-panel').scrollIntoView({behavior:'smooth',block:'start'}); };
+$('close-comparison').onclick = () => { $('compare-panel').hidden = true; };
+document.addEventListener('change', e => {
+  const box = e.target.closest('[data-run-select]');
+  if (!box) return;
+  const id = Number(box.dataset.runSelect);
+  if (box.checked && selectedRunIds.size >= 4) {
+    box.checked = false; $('run-feedback').textContent = 'Select up to four runs at a time.'; return;
+  }
+  if (box.checked) selectedRunIds.add(id); else selectedRunIds.delete(id);
+  renderRunsView();
+});
 for (const id of ['search', 'priority', 'zone-filter']) $(id).addEventListener('input', renderRows);
 $('export').onclick = exportCsv;
 $('report-export').onclick = exportReport;
