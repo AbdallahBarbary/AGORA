@@ -14,6 +14,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path=='/api/state':
             with lock: return self.respond(farm.state())
+        if self.path=='/api/report.pdf':
+            with lock: snapshot=farm.state()
+            try:
+                from report import build_report
+                payload=build_report(snapshot)
+            except ImportError:
+                return self.respond({'error':'PDF export requires the optional dependency. Run: python -m pip install -r requirements.txt'},503)
+            except Exception as e:
+                return self.respond({'error':f'Could not create report: {e}'},500)
+            day=1+(snapshot['tick']*snapshot['config']['tick_minutes'])//1440
+            filename=f"agora-simulation-report-{snapshot['scenario']}-day-{day}.pdf"
+            self.send_response(200)
+            self.send_header('Content-Type','application/pdf')
+            self.send_header('Content-Disposition',f'attachment; filename="{filename}"')
+            self.send_header('Cache-Control','no-store')
+            self.end_headers(); self.wfile.write(payload); return
         paths={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}
         if self.path not in paths: return self.respond({'error':'Not found'},404)
         p=root/paths[self.path]; self.send_response(200)

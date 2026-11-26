@@ -206,3 +206,5 @@ td.cell-id{font-family:'IBM Plex Mono',ui-monospace,monospace;font-weight:500}
 @media(max-width:760px){.wrap{padding-left:16px;padding-right:16px}.ctl-readouts,.active-events{margin-left:0}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 .ctl-readouts{flex-wrap:wrap;gap:12px 24px}.ctl-readouts .big{white-space:nowrap}
+.export-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+@media(max-width:760px){.export-actions{width:100%}.export-actions button{flex:1}}

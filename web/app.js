@@ -365,6 +365,24 @@ function exportCsv() {
   const url = URL.createObjectURL(new Blob([lines.join('\n')], {type: 'text/csv'})), a = document.createElement('a');
   a.href = url; a.download = 'agora-decisions.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+async function exportReport() {
+  const button = $('report-export'), label = button.textContent;
+  button.disabled = true; button.textContent = 'Preparing PDF...';
+  try {
+    const response = await fetch('/api/report.pdf');
+    if (!response.ok) {
+      let message = 'The report could not be generated.';
+      try { message = (await response.json()).error || message; } catch (_) {}
+      throw new Error(message);
+    }
+    const blob = await response.blob(), url = URL.createObjectURL(blob), a = document.createElement('a');
+    const disposition = response.headers.get('Content-Disposition') || '';
+    a.href = url; a.download = (disposition.match(/filename="?([^";]+)"?/i) || [,'agora-simulation-report.pdf'])[1];
+    a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (error) {
+    $('error').textContent = `Report export problem: ${error.message}`; $('error').hidden = false;
+  } finally { button.disabled = false; button.textContent = label; }
+}
 
 // ---------- views ----------
 function showView(v) {
@@ -444,5 +462,6 @@ $('demo-start').onclick = () => demoGo(0); $('demo-next').onclick = () => demoGo
 $('view-farm').onclick = () => showView('farm'); $('view-details').onclick = () => showView('details');
 for (const id of ['search', 'priority', 'zone-filter']) $(id).addEventListener('input', renderRows);
 $('export').onclick = exportCsv;
+$('report-export').onclick = exportReport;
 let resizeTimer; window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (state && view === 'farm') drawChart(); }, 100); });
 showPlay(); api('state');

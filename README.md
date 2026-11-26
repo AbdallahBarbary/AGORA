@@ -4,10 +4,11 @@ A local Python prototype of agent-led irrigation on an 8 × 8 simulated tomato f
 
 ## Run
 
-Requires Python 3.10 or later. No third-party packages are required to run the application.
+Requires Python 3.10 or later. The dashboard runs with the Python standard library. Install the optional PDF report dependency once if you want PDF export:
 
 ```powershell
 cd path\to\AGORA
+python -m pip install -r requirements.txt
 python server.py
 ```
 
@@ -84,6 +85,12 @@ The **Details** view shows the message feed and, in the decision table, each zon
 `server.py` exposes the state and step/reset/refill/event actions on a local HTTP server; a step can advance up to 480 cycles at once (that's how fast playback and **Skip one day** work). `web/` provides the custom browser interface. State lives in memory and is shared between browser tabs. Restarting the server resets it. The simulation advances only while the browser runs it or the user requests a step.
 
 `calibrate.py` re-derives the FITTED weather numbers from the NOAA data in `data/uscrn/` and compares them with the code. `test_engine.py` holds the unit tests. `data/` holds the downloaded calibration data (git-ignored, apart from its README).
+
+## PDF run report
+
+Open **Details** and choose **Download report (PDF)** to create a concise, two-page report from the current in-memory simulation run. It uses AGORA's charcoal, green, soil-amber, and water-blue palette. Page one highlights run metrics, moisture and allocation charts, the Manager assessment, and follow-up recommendations. Page two keeps only the key model settings, limitations, recent events, and clickable source references. It intentionally omits an executive summary, milestone summary, and system architecture/how-it-works section. The report labels results as simulated and does not claim ML performance; the full settings catalogue remains in this README.
+
+The report timestamp uses `Africa/Cairo` by default and also includes UTC. Set `AGORA_REPORT_TIMEZONE` to an IANA timezone (for example `America/Phoenix`) before starting the server to use another local display timezone. The simulation run itself is not saved; restarting the server or resetting the scenario starts a new run. Keep a copy of each exported PDF if you need a permanent record.
 
 ## Numbers and sources
 
